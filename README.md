@@ -215,7 +215,204 @@ await parent
 # Child events will have event_parent_id = parent.event_id
 ```
 
+<br/>
+
 ---
+---
+
+<br/>
+
+## API Documentation
+
+### `EventBus`
+
+The main event bus class that manages event processing and handler execution.
+
+#### Constructor
+
+```python
+EventBus(
+    name: str | None = None,
+    wal_path: Path | str | None = None,
+    parallel_handlers: bool = False
+)
+```
+
+**Parameters:**
+- `name`: Unique identifier for the bus (auto-generated if not provided)
+- `wal_path`: Path for write-ahead logging of events (optional)
+- `parallel_handlers`: If True, handlers run concurrently for each event
+
+#### Methods
+
+##### `on(event_pattern, handler)`
+Subscribe a handler to events matching a pattern.
+
+```python
+bus.on('UserEvent', handler_func)  # By event type string
+bus.on(UserEvent, handler_func)    # By event class
+bus.on('*', handler_func)          # Wildcard - all events
+```
+
+##### `dispatch(event) -> BaseEvent`
+Enqueue an event for processing and return it immediately (synchronous).
+
+```python
+event = bus.dispatch(MyEvent(data="test"))
+result = await event  # Wait for completion
+```
+
+##### `expect(event_type, timeout=None, predicate=None) -> BaseEvent`
+Wait for a specific event to occur.
+
+```python
+# Wait for any UserEvent
+event = await bus.expect('UserEvent', timeout=30)
+
+# Wait with custom filter
+event = await bus.expect(
+    'UserEvent',
+    predicate=lambda e: e.user_id == 'specific_user'
+)
+```
+
+##### `wait_until_idle(timeout=None)`
+Wait until all events are processed and the bus is idle.
+
+```python
+await bus.wait_until_idle(timeout=5.0)
+```
+
+##### `stop(timeout=None)`
+Stop the event bus, optionally waiting for pending events.
+
+```python
+await bus.stop(timeout=1.0)  # Graceful shutdown
+await bus.stop()             # Immediate shutdown
+```
+
+#### Properties
+
+- `name`: The bus identifier
+- `id`: Unique UUID7 for this bus instance
+- `event_history`: Dict of all events by event_id
+- `events_pending`: List of events waiting to be processed
+- `events_started`: List of events currently being processed
+- `events_completed`: List of completed events
+
+---
+
+### `BaseEvent`
+
+Base class for all events. Automatically derives `event_type` from class name.
+
+#### Fields
+
+```python
+class BaseEvent(BaseModel):
+    # Required fields (auto-generated if not provided)
+    event_type: str              # Defaults to class name
+    event_id: str                # Unique UUID7 identifier
+    event_created_at: datetime   # When event was created
+    
+    # Optional fields
+    event_timeout: float = 60.0  # Timeout in seconds
+    event_schema: str           # Module.Class@version
+    event_parent_id: str        # Parent event ID
+    event_path: list[str]       # List of bus names traversed
+    
+    # Result tracking (populated by EventBus)
+    event_results: dict[str, EventResult]  # Handler results
+```
+
+#### Methods
+
+##### `await event`
+Wait for the event to be completed by all handlers.
+
+```python
+event = bus.dispatch(MyEvent())
+completed_event = await event
+```
+
+##### `event_results_flat_dict(timeout=None) -> dict`
+Merge all dict results from handlers into a single dict.
+
+```python
+results = await event.event_results_flat_dict()
+# {'key1': 'value1', 'key2': 'value2'}
+```
+
+##### `event_results_flat_list(timeout=None) -> list`
+Merge all list results from handlers into a single list.
+
+```python
+results = await event.event_results_flat_list()
+# ['item1', 'item2', 'item3']
+```
+
+##### `event_results_by_handler_id(timeout=None) -> dict`
+Get results indexed by handler ID.
+
+```python
+results = await event.event_results_by_handler_id()
+# {'handler_id_1': result1, 'handler_id_2': result2}
+```
+
+##### `event_result(timeout=None) -> Any`
+Get the first result from any handler.
+
+```python
+result = await event.event_result()
+```
+
+#### Properties
+
+- `event_status`: Current status ('pending', 'started', 'completed')
+- `event_started_at`: When first handler started processing
+- `event_completed_at`: When all handlers completed
+
+---
+
+### `EventResult`
+
+Represents the result from a single handler execution.
+
+#### Fields
+
+```python
+class EventResult(BaseModel):
+    id: str                    # Unique identifier
+    handler_id: str           # Handler function ID
+    handler_name: str         # Handler function name
+    eventbus_id: str          # Bus that executed this handler
+    eventbus_name: str        # Bus name
+    
+    status: str               # 'pending', 'started', 'completed', 'error'
+    result: Any               # Handler return value
+    error: str | None         # Error message if failed
+    
+    started_at: datetime      # When handler started
+    completed_at: datetime    # When handler completed
+    timeout: float            # Handler timeout in seconds
+```
+
+#### Methods
+
+##### `await result`
+Wait for this specific handler result to complete.
+
+```python
+handler_result = event.event_results['handler_id']
+value = await handler_result  # Returns result or raises error
+```
+
+<br/>
+
+---
+---
+
+<br/>
 
 ## Development
 
