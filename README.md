@@ -244,6 +244,25 @@ pytest tests -v x --full-trace
 pytest tests/test_eventbus.py
 ```
 
+## Inspiration
+
+- https://www.cosmicpython.com/book/chapter_08_events_and_message_bus.html#message_bus_diagram ⭐️
+- https://developer.mozilla.org/en-US/docs/Web/API/EventTarget ⭐️
+- https://github.com/pytest-dev/pluggy ⭐️
+- https://github.com/teamhide/fastapi-event ⭐️
+- https://github.com/ethereum/lahja ⭐️
+- https://github.com/enricostara/eventure ⭐️
+- https://github.com/akhundMurad/diator ⭐️
+- https://github.com/n89nanda/pyeventbus
+- https://github.com/iunary/aioemit
+- https://github.com/dboslee/evently
+- https://github.com/ArcletProject/Letoderea
+- https://github.com/seanpar203/event-bus
+- https://github.com/n89nanda/pyeventbus
+- https://github.com/nicolaszein/py-async-bus
+- https://github.com/AngusWG/simple-event-bus
+- https://www.joeltok.com/posts/2021-03-building-an-event-bus-in-python/
+
 ## License
 
 This project is licensed under the MIT License. For more information, see the main browser-use repository: https://github.com/browser-use/browser-use
