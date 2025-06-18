@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Generator, Self
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from uuid_extensions import uuid7str  # type: ignore
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ class BaseEvent(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True, validate_default=True)
 
-    event_type: PythonIdentifierStr
+    event_type: PythonIdentifierStr = Field(default=None)
     event_schema: str | None = Field(default=None, description='Event schema version in format ClassName@version', max_length=100)
     event_timeout: float | None = Field(default=60.0, description='Timeout in seconds for event to complete')
 
@@ -143,6 +143,19 @@ class BaseEvent(BaseModel):
     @property
     def event_status(self) -> str:
         return 'completed' if self.event_completed_at else 'started' if self.event_started_at else 'pending'
+
+    @model_validator(mode='before')
+    @classmethod
+    def _set_event_type_from_class_name(cls, data: Any) -> Any:
+        """Automatically set event_type to the class name if not provided"""
+        if isinstance(data, dict):
+            # Only set event_type if it's not in the data dict AND there's no default
+            if 'event_type' not in data:
+                # Check if there's a field default
+                field_info = cls.model_fields.get('event_type')
+                if field_info and field_info.default is None:
+                    data['event_type'] = cls.__name__
+        return data
 
     def model_post_init(self, __context: Any) -> None:
         """Append the library version number to the event schema so we know what version was used to create any JSON dump"""

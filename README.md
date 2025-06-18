@@ -13,10 +13,8 @@ pip install bubus
 ```python
 import asyncio
 from bubus import EventBus, BaseEvent
-from pydantic import Field
 
 class UserLoginEvent(BaseEvent):
-    event_type: str = Field(default='UserLoginEvent', frozen=True)
     username: str
     timestamp: float
 
@@ -47,10 +45,8 @@ Define events as Pydantic models with full type checking and validation:
 ```python
 from typing import Any
 from bubus import BaseEvent
-from pydantic import Field
 
 class OrderCreatedEvent(BaseEvent):
-    event_type: str = Field(default='OrderCreatedEvent', frozen=True)
     order_id: str
     customer_id: str
     total_amount: float
