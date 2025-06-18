@@ -228,8 +228,6 @@ await parent
 
 The main event bus class that manages event processing and handler execution.
 
-#### Constructor
-
 ```python
 EventBus(
     name: str | None = None,
@@ -239,14 +237,26 @@ EventBus(
 ```
 
 **Parameters:**
+
 - `name`: Unique identifier for the bus (auto-generated if not provided)
 - `wal_path`: Path for write-ahead logging of events (optional)
-- `parallel_handlers`: If True, handlers run concurrently for each event
+- `parallel_handlers`: If `True`, handlers run concurrently for each event, otherwise serially if `False`
 
-#### Methods
+#### `EventBus` Properties
 
-##### `on(event_pattern, handler)`
-Subscribe a handler to events matching a pattern.
+- `name`: The bus identifier
+- `id`: Unique UUID7 for this bus instance
+- `event_history`: Dict of all events by event_id
+- `events_pending`: List of events waiting to be processed
+- `events_started`: List of events currently being processed
+- `events_completed`: List of completed events
+
+
+#### `EventBus` Methods
+
+##### `on(event_type, handler)`
+
+Subscribe a handler to events matching a specific event type or `'*'` for all events.
 
 ```python
 bus.on('UserEvent', handler_func)  # By event type string
@@ -255,14 +265,16 @@ bus.on('*', handler_func)          # Wildcard - all events
 ```
 
 ##### `dispatch(event) -> BaseEvent`
-Enqueue an event for processing and return it immediately (synchronous).
+
+Enqueue an event for processing and return the pending `Event` immediately (synchronous).
 
 ```python
 event = bus.dispatch(MyEvent(data="test"))
-result = await event  # Wait for completion
+result = await event  # await the pending Event to get the completed Event
 ```
 
 ##### `expect(event_type, timeout=None, predicate=None) -> BaseEvent`
+
 Wait for a specific event to occur.
 
 ```python
@@ -277,66 +289,105 @@ event = await bus.expect(
 ```
 
 ##### `wait_until_idle(timeout=None)`
+
 Wait until all events are processed and the bus is idle.
 
 ```python
-await bus.wait_until_idle(timeout=5.0)
+await bus.wait_until_idle()             # wait indefinitely until EventBus has finished processing all events
+
+await bus.wait_until_idle(timeout=5.0)  # wait up to 5 seconds
 ```
 
 ##### `stop(timeout=None)`
+
 Stop the event bus, optionally waiting for pending events.
 
 ```python
-await bus.stop(timeout=1.0)  # Graceful shutdown
-await bus.stop()             # Immediate shutdown
+await bus.stop(timeout=1.0)  # Graceful stop, wait up to 1sec for pending and active events to finish processing
+await bus.stop()             # Immediate shutdown, aborts all pending and actively processing events
 ```
-
-#### Properties
-
-- `name`: The bus identifier
-- `id`: Unique UUID7 for this bus instance
-- `event_history`: Dict of all events by event_id
-- `events_pending`: List of events waiting to be processed
-- `events_started`: List of events currently being processed
-- `events_completed`: List of completed events
 
 ---
 
 ### `BaseEvent`
 
-Base class for all events. Automatically derives `event_type` from class name.
+Base class for all events. Subclass `BaseEvent` to define your own events.
 
-#### Fields
+Make sure none of your own event data fields start with `event_` or `model_` to avoid clashing with `BaseEvent` or `pydantic` builtin attrs.
+
+#### `BaseEvent` Fields
 
 ```python
 class BaseEvent(BaseModel):
-    # Required fields (auto-generated if not provided)
+    # Framework-managed fields
     event_type: str              # Defaults to class name
-    event_id: str                # Unique UUID7 identifier
-    event_created_at: datetime   # When event was created
+    event_id: str                # Unique UUID7 identifier, auto-generated if not provided
+    event_timeout: float = 60.0  # Maximum execution in seconds for each handler
+    event_schema: str            # Module.Class@version (auto-set based on class & LIBRARY_VERSION env var)
+    event_parent_id: str         # Parent event ID (auto-set)
+    event_path: list[str]        # List of bus names traversed (auto-set)
+    event_created_at: datetime   # When event was created, auto-generated
+    event_results: dict[str, EventResult]   # Handler results
     
-    # Optional fields
-    event_timeout: float = 60.0  # Timeout in seconds
-    event_schema: str           # Module.Class@version
-    event_parent_id: str        # Parent event ID
-    event_path: list[str]       # List of bus names traversed
-    
-    # Result tracking (populated by EventBus)
-    event_results: dict[str, EventResult]  # Handler results
+    # Data fields
+    # ... sublcass BaseEvent to add your own event data fields here ...
+    # some_key: str
+    # some_other_key: dict[str, int]
+    # ...
 ```
 
-#### Methods
+`event.event_results` contains a dict of pending `EventResult` objects that will be completed once hanlders finish executing.
+
+
+#### `BaseEvent` Properties
+
+- `event_status`: `Literal['pending', 'started', 'complete']` Event status
+- `event_started_at`: `datetime` When first handler started processing
+- `event_completed_at`: `datetime` When all handlers completed processing
+
+#### `BaseEvent` Methods
 
 ##### `await event`
-Wait for the event to be completed by all handlers.
+
+Await the `Event` object directly to get the completed `Event` object once all handlers have finished executing.
 
 ```python
 event = bus.dispatch(MyEvent())
 completed_event = await event
+
+raw_result_values = [(await event_result) for event_result in completed_event.event_results.values()]
+# equivalent to: completed_event.event_results_list()  (see below)
+```
+
+##### `event_result(timeout=None) -> Any`
+
+Utility method helper to execute all the handlers and return the first handler's raw result value.
+
+```python
+result = await event.event_result()
+```
+
+##### `event_results_by_handler_id(timeout=None) -> dict`
+
+Utility method helper to get all raw result values organized by `{handler_id: result_value}`.
+
+```python
+results = await event.event_results_by_handler_id()
+# {'handler_id_1': result1, 'handler_id_2': result2}
+```
+
+##### `event_results_list(timeout=None) -> list[Any]`
+
+Utility method helper to get all raw result values in a list.
+
+```python
+results = await event.event_results_list()
+# [result1, result2]
 ```
 
 ##### `event_results_flat_dict(timeout=None) -> dict`
-Merge all dict results from handlers into a single dict.
+
+Utility method helper to merge all raw result values that are `dict`s into a single flat `dict`.
 
 ```python
 results = await event.event_results_flat_dict()
@@ -344,41 +395,22 @@ results = await event.event_results_flat_dict()
 ```
 
 ##### `event_results_flat_list(timeout=None) -> list`
-Merge all list results from handlers into a single list.
+
+Utility method helper to merge all raw result values that are `list`s into a single flat `list`.
 
 ```python
 results = await event.event_results_flat_list()
 # ['item1', 'item2', 'item3']
 ```
 
-##### `event_results_by_handler_id(timeout=None) -> dict`
-Get results indexed by handler ID.
-
-```python
-results = await event.event_results_by_handler_id()
-# {'handler_id_1': result1, 'handler_id_2': result2}
-```
-
-##### `event_result(timeout=None) -> Any`
-Get the first result from any handler.
-
-```python
-result = await event.event_result()
-```
-
-#### Properties
-
-- `event_status`: Current status ('pending', 'started', 'completed')
-- `event_started_at`: When first handler started processing
-- `event_completed_at`: When all handlers completed
 
 ---
 
 ### `EventResult`
 
-Represents the result from a single handler execution.
+The placeholder object that represents the pending result from a single handler executing an event.
 
-#### Fields
+#### `EventResult` Fields
 
 ```python
 class EventResult(BaseModel):
@@ -397,14 +429,15 @@ class EventResult(BaseModel):
     timeout: float            # Handler timeout in seconds
 ```
 
-#### Methods
+#### `EventResult` Methods
 
 ##### `await result`
-Wait for this specific handler result to complete.
+
+Await the `EventResult` object directly to get the raw result value.
 
 ```python
 handler_result = event.event_results['handler_id']
-value = await handler_result  # Returns result or raises error
+value = await handler_result  # Returns result or raises an exception if handler hits an error
 ```
 
 <br/>

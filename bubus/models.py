@@ -44,7 +44,7 @@ class BaseEvent(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True, validate_default=True)
 
-    event_type: PythonIdentifierStr = Field(default=None)
+    event_type: PythonIdentifierStr | None = Field(default=None, description='Event type name')
     event_schema: str | None = Field(default=None, description='Event schema version in format ClassName@version', max_length=250)
     event_timeout: float | None = Field(default=60.0, description='Timeout in seconds for event to complete')
 
@@ -146,13 +146,13 @@ class BaseEvent(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _set_event_type_from_class_name(cls, data: Any) -> Any:
+    def _set_event_type_from_class_name(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Automatically set event_type to the class name if not provided"""
-        if isinstance(data, dict):
+        if isinstance(data, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
             # Only set event_type if it's not in the data dict AND there's no default
             if 'event_type' not in data:
                 # Check if there's a field default
-                field_info = cls.model_fields.get('event_type')
+                field_info: Any | None = cls.model_fields.get('event_type')
                 if field_info and field_info.default is None:
                     data['event_type'] = cls.__name__
         return data
@@ -216,6 +216,16 @@ class BaseEvent(BaseModel):
             pass
         return {handler_id: await event_result for handler_id, event_result in self.event_results.items()}
 
+    async def event_results_list(self, timeout: float | None = None) -> list[Any]:
+        """Get all results as a list"""
+        assert self.event_completed, 'EventResult cannot be awaited outside of an async context'
+        try:
+            await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
+        except TimeoutError:
+            pass
+
+        return [await event_result for event_result in self.event_results.values()]
+
     async def event_results_flat_dict(self, timeout: float | None = None) -> dict[Any, Any]:
         """Merge all dict results into single dict"""
 
@@ -236,8 +246,8 @@ class BaseEvent(BaseModel):
                     # raise TypeError(f"Handler '{event_result.handler_name}' returned {type(event_result.result).__name__} instead of dict")
                     continue
                 merged_results.update(
-                    event_result.result
-                )  # update the merged dict with the contents of the result dict  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                    event_result.result  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                )  # update the merged dict with the contents of the result dict
         return merged_results
 
     async def event_results_flat_list(self, timeout: float | None = None) -> list[Any]:
@@ -254,8 +264,8 @@ class BaseEvent(BaseModel):
             if event_result.status == 'completed' and event_result.result is not None:
                 if isinstance(event_result.result, list):
                     merged_results.extend(
-                        event_result.result
-                    )  # append the contents of the list to the merged list  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                        event_result.result  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                    )  # append the contents of the list to the merged list
                 elif isinstance(event_result.result, BaseEvent):  # skip if result is another Event
                     continue
                 else:
