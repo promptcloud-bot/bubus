@@ -1,4 +1,4 @@
-# `bubus`: Advanced Pydantic-powered event bus for async Python
+# `bubus`: Pydantic-based event bus for async Python
 
 Bubus is an advanced Pydantic-powered event bus with async support, designed for building reactive, event-driven applications with Python. It provides a powerful yet simple API for implementing publish-subscribe patterns with type safety, async handlers, and advanced features like event forwarding between buses.
 
@@ -32,6 +32,12 @@ result = await event
 print(f"Login handled: {result.event_results}")
 ```
 
+<br/>
+
+---
+
+<br/>
+
 ## Features
 
 ### Type-Safe Events with Pydantic
@@ -39,16 +45,16 @@ print(f"Login handled: {result.event_results}")
 Define events as Pydantic models with full type checking and validation:
 
 ```python
+from typing import Any
 from bubus import BaseEvent
 from pydantic import Field
-from typing import Dict, Any
 
 class OrderCreatedEvent(BaseEvent):
     event_type: str = Field(default='OrderCreatedEvent', frozen=True)
     order_id: str
     customer_id: str
     total_amount: float
-    items: list[Dict[str, Any]]
+    items: list[dict[str, Any]]
 
 # Events are automatically validated
 event = OrderCreatedEvent(
@@ -212,6 +218,8 @@ parent = bus.dispatch(ParentEvent())
 await parent
 # Child events will have event_parent_id = parent.event_id
 ```
+
+---
 
 ## Development
 
