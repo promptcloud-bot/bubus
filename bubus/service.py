@@ -225,7 +225,7 @@ class EventBus:
 
         # Add event to history
         self.event_history[event.event_id] = event
-        logger.debug(f'📝 {self}.dispatch() adding event {event.event_id} to history')
+        # logger.debug(f'📝 {self}.dispatch() adding event {event.event_id} to history')
 
         # Auto-start if needed
         self._start()
@@ -417,7 +417,7 @@ class EventBus:
                 event = await asyncio.wait_for(self.event_queue.get(), timeout=wait_for_timeout)
             except TimeoutError:
                 if not (self.events_pending or self.events_started or self.event_queue.qsize()):
-                    logger.debug(f'🛑 {self} idle')
+                    # logger.debug(f'🛑 {self} idle')
                     self._on_idle.set()
                 return None
 

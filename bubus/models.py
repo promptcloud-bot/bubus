@@ -182,13 +182,13 @@ class BaseEvent(BaseModel):
                 status=kwargs.get('status', 'pending'),
                 timeout=self.event_timeout,
             )
-            logger.debug(f'Created EventResult for handler {handler_id}: {handler and handler.__name__}')
+            # logger.debug(f'Created EventResult for handler {handler_id}: {handler and handler.__name__}')
 
         # Update the EventResult with provided kwargs
         self.event_results[handler_id].update(**kwargs)
-        logger.debug(
-            f'Updated EventResult for handler {handler_id}: status={self.event_results[handler_id].status}, total_results={len(self.event_results)}'
-        )
+        # logger.debug(
+        #     f'Updated EventResult for handler {handler_id}: status={self.event_results[handler_id].status}, total_results={len(self.event_results)}'
+        # )
         # Don't mark complete here - let the EventBus do it after all handlers are done
         return self.event_results[handler_id]
 
