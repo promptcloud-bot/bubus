@@ -1,9 +1,9 @@
 import asyncio
 import logging
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any, Generator, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self
 from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, model_validator
@@ -168,7 +168,7 @@ class BaseEvent(BaseModel):
     ) -> 'EventResult':
         """Create or update an EventResult for a handler"""
         handler_id: PythonIdStr = str(id(handler))
-        eventbus = eventbus or (handler and hasattr(handler, '__self__') and handler.__self__) or None   # type: ignore
+        eventbus = eventbus or (handler and hasattr(handler, '__self__') and handler.__self__) or None  # type: ignore
         eventbus_id: PythonIdStr = str(id(eventbus))
 
         # Get or create EventResult
@@ -235,7 +235,9 @@ class BaseEvent(BaseModel):
                 if not isinstance(event_result.result, dict):
                     # raise TypeError(f"Handler '{event_result.handler_name}' returned {type(event_result.result).__name__} instead of dict")
                     continue
-                merged_results.update(event_result.result)  # update the merged dict with the contents of the result dict  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                merged_results.update(
+                    event_result.result
+                )  # update the merged dict with the contents of the result dict  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
         return merged_results
 
     async def event_results_flat_list(self, timeout: float | None = None) -> list[Any]:
@@ -251,7 +253,9 @@ class BaseEvent(BaseModel):
         for event_result in self.event_results.values():
             if event_result.status == 'completed' and event_result.result is not None:
                 if isinstance(event_result.result, list):
-                    merged_results.extend(event_result.result)  # append the contents of the list to the merged list  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                    merged_results.extend(
+                        event_result.result
+                    )  # append the contents of the list to the merged list  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
                 elif isinstance(event_result.result, BaseEvent):  # skip if result is another Event
                     continue
                 else:

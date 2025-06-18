@@ -161,7 +161,7 @@ class EventBus:
 
         # Check for duplicate handler names
         if hasattr(handler, '__self__'):
-            handler_name = f'{handler.__self__}.{handler.__name__}()'   # pyright: ignore[reportFunctionMemberAccess]
+            handler_name = f'{handler.__self__}.{handler.__name__}()'  # pyright: ignore[reportFunctionMemberAccess]
         else:
             handler_name = handler.__name__
         existing_names = [h.__name__ for h in self.handlers.get(event_key, [])]
@@ -407,7 +407,9 @@ class EventBus:
     ) -> BaseEvent | None:
         """Process a single event from the queue"""
 
-        assert self._runloop_lock and self._on_idle and self.event_queue, 'EventBus._start() must be called before _run_loop_step()'
+        assert self._runloop_lock and self._on_idle and self.event_queue, (
+            'EventBus._start() must be called before _run_loop_step()'
+        )
 
         # Wait for next event with timeout to periodically check idle state
         if event is None:
@@ -587,7 +589,7 @@ class EventBus:
 
         # First check: If handler is another EventBus.dispatch method, check if we're forwarding to another bus that it's already been processed by
         if hasattr(handler, '__self__') and isinstance(handler.__self__, EventBus) and handler.__name__ == 'dispatch':  # pyright: ignore[reportFunctionMemberAccess]
-            target_bus = handler.__self__   # pyright: ignore[reportFunctionMemberAccess]
+            target_bus = handler.__self__  # pyright: ignore[reportFunctionMemberAccess]
             if target_bus.name in event.event_path:
                 return True
 

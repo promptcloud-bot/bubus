@@ -29,7 +29,7 @@ from bubus import BaseEvent, EventBus
 
 class CreateAgentTaskEvent(BaseEvent):
     """Test event model for creating an agent task"""
-    
+
     user_id: str
     agent_session_id: str
     llm_model: str
@@ -538,59 +538,61 @@ class TestEventTypeOverride:
 
     async def test_automatic_event_type_derivation(self, eventbus):
         """Test that event_type is automatically derived from class name when not specified"""
-        
+
         # Test automatic derivation
         event = UserActionEvent(action='test', user_id='u1')
         assert event.event_type == 'UserActionEvent'
-        
+
         event2 = SystemEventModel(event_name='startup')
         assert event2.event_type == 'SystemEventModel'
-        
+
         # Create inline event class without explicit event_type
         class InlineTestEvent(BaseEvent):
             data: str
-        
+
         inline_event = InlineTestEvent(data='test')
         assert inline_event.event_type == 'InlineTestEvent'
-        
+
         # Test with EventBus
         received = []
+
         async def handler(event):
             received.append(event)
-        
+
         eventbus.on('UserActionEvent', handler)
         eventbus.on('InlineTestEvent', handler)
-        
+
         await eventbus.dispatch(event)
         await eventbus.dispatch(inline_event)
         await eventbus.wait_until_idle()
-        
+
         assert len(received) == 2
         assert received[0].event_type == 'UserActionEvent'
         assert received[1].event_type == 'InlineTestEvent'
 
     async def test_explicit_event_type_override(self, eventbus):
         """Test that explicit event_type can still override the automatic derivation"""
-        
+
         # Create event with explicit event_type override
         class OverrideEvent(BaseEvent):
             event_type: str = Field(default='CustomEventType', frozen=True)
             data: str
-        
+
         event = OverrideEvent(data='test')
         assert event.event_type == 'CustomEventType'  # Not 'OverrideEvent'
-        
+
         # Test with EventBus
         received = []
+
         async def handler(event):
             received.append(event)
-        
+
         eventbus.on('CustomEventType', handler)
         eventbus.on('OverrideEvent', handler)  # This won't match
-        
+
         await eventbus.dispatch(event)
         await eventbus.wait_until_idle()
-        
+
         assert len(received) == 1
         assert received[0].event_type == 'CustomEventType'
 
