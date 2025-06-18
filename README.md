@@ -330,13 +330,13 @@ class BaseEvent(BaseModel):
     event_results: dict[str, EventResult]   # Handler results
     
     # Data fields
-    # ... sublcass BaseEvent to add your own event data fields here ...
+    # ... subclass BaseEvent to add your own event data fields here ...
     # some_key: str
     # some_other_key: dict[str, int]
     # ...
 ```
 
-`event.event_results` contains a dict of pending `EventResult` objects that will be completed once hanlders finish executing.
+`event.event_results` contains a dict of pending `EventResult` objects that will be completed once handlers finish executing.
 
 
 #### `BaseEvent` Properties
