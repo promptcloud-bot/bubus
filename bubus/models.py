@@ -45,7 +45,7 @@ class BaseEvent(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True, validate_default=True)
 
     event_type: PythonIdentifierStr = Field(default=None)
-    event_schema: str | None = Field(default=None, description='Event schema version in format ClassName@version', max_length=100)
+    event_schema: str | None = Field(default=None, description='Event schema version in format ClassName@version', max_length=250)
     event_timeout: float | None = Field(default=60.0, description='Timeout in seconds for event to complete')
 
     # Runtime metadata
