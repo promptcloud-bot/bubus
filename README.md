@@ -408,7 +408,8 @@ results = await event.event_results_flat_list()
 
 ### `EventResult`
 
-The placeholder object that represents the pending result from a single handler executing an event.
+The placeholder object that represents the pending result from a single handler executing an event.  
+`Event.event_results` contains a `dict[PythonIdStr, EventResult]` in the shape of `{handler_id: EventResult()}`.
 
 #### `EventResult` Fields
 
