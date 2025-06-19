@@ -203,18 +203,18 @@ bus.dispatch(ImportantEvent(data="critical"))
 
 ### Event Context and Parent Tracking
 
-Automatically track event relationships and causality:
+Automatically track event relationships and causality tree:
 
 ```python
 async def parent_handler(event: BaseEvent):
-    # Child events automatically get parent_id set
+    # handlers can emit events during processing
     child_event = bus.dispatch(ChildEvent())
-    return await child_event
 
-# Parent-child relationships are tracked
-parent = bus.dispatch(ParentEvent())
-await parent
-# Child events will have event_parent_id = parent.event_id
+parent_event = bus.dispatch(ParentEvent())
+child_event = await bus.expect(ChildEvent)
+
+# parent-child relationships are automagically tracked
+assert child_event.event_parent_id == parent_event.event_id
 ```
 
 <br/>
@@ -240,15 +240,15 @@ EventBus(
 
 **Parameters:**
 
-- `name`: Unique identifier for the bus (auto-generated if not provided)
-- `wal_path`: Path for write-ahead logging of events (optional)
-- `parallel_handlers`: If `True`, handlers run concurrently for each event, otherwise serially if `False`
+- `name`: Optional unique name for the bus (auto-generated if not provided)
+- `wal_path`: Path for write-ahead logging of events to a `jsonl` file (optional)
+- `parallel_handlers`: If `True`, handlers run concurrently for each event, otherwise serially if `False` (the default)
 
 #### `EventBus` Properties
 
 - `name`: The bus identifier
 - `id`: Unique UUID7 for this bus instance
-- `event_history`: Dict of all events by event_id
+- `event_history`: Dict of all events the bus has seen by event_id
 - `events_pending`: List of events waiting to be processed
 - `events_started`: List of events currently being processed
 - `events_completed`: List of completed events
@@ -256,7 +256,7 @@ EventBus(
 
 #### `EventBus` Methods
 
-##### `on(event_type, handler)`
+##### `on(event_type: str | Type[BaseEvent], handler: Callable)`
 
 Subscribe a handler to events matching a specific event type or `'*'` for all events.
 
@@ -266,7 +266,7 @@ bus.on(UserEvent, handler_func)    # By event class
 bus.on('*', handler_func)          # Wildcard - all events
 ```
 
-##### `dispatch(event) -> BaseEvent`
+##### `dispatch(event: BaseEvent) -> BaseEvent`
 
 Enqueue an event for processing and return the pending `Event` immediately (synchronous).
 
@@ -275,7 +275,7 @@ event = bus.dispatch(MyEvent(data="test"))
 result = await event  # await the pending Event to get the completed Event
 ```
 
-##### `expect(event_type, timeout=None, predicate=None) -> BaseEvent`
+##### `expect(event_type: str | Type[BaseEvent], timeout: float | None=None, predicate: Callable[[BaseEvent], bool]=None) -> BaseEvent`
 
 Wait for a specific event to occur.
 
@@ -290,7 +290,7 @@ event = await bus.expect(
 )
 ```
 
-##### `wait_until_idle(timeout=None)`
+##### `wait_until_idle(timeout: float | None=None)`
 
 Wait until all events are processed and the bus is idle.
 
@@ -300,7 +300,7 @@ await bus.wait_until_idle()             # wait indefinitely until EventBus has f
 await bus.wait_until_idle(timeout=5.0)  # wait up to 5 seconds
 ```
 
-##### `stop(timeout=None)`
+##### `stop(timeout: float | None=None)`
 
 Stop the event bus, optionally waiting for pending events.
 
@@ -361,7 +361,7 @@ raw_result_values = [(await event_result) for event_result in completed_event.ev
 # equivalent to: completed_event.event_results_list()  (see below)
 ```
 
-##### `event_result(timeout=None) -> Any`
+##### `event_result(timeout: float | None=None) -> Any`
 
 Utility method helper to execute all the handlers and return the first handler's raw result value.
 
@@ -369,7 +369,7 @@ Utility method helper to execute all the handlers and return the first handler's
 result = await event.event_result()
 ```
 
-##### `event_results_by_handler_id(timeout=None) -> dict`
+##### `event_results_by_handler_id(timeout: float | None=None) -> dict`
 
 Utility method helper to get all raw result values organized by `{handler_id: result_value}`.
 
@@ -378,7 +378,7 @@ results = await event.event_results_by_handler_id()
 # {'handler_id_1': result1, 'handler_id_2': result2}
 ```
 
-##### `event_results_list(timeout=None) -> list[Any]`
+##### `event_results_list(timeout: float | None=None) -> list[Any]`
 
 Utility method helper to get all raw result values in a list.
 
@@ -387,7 +387,7 @@ results = await event.event_results_list()
 # [result1, result2]
 ```
 
-##### `event_results_flat_dict(timeout=None) -> dict`
+##### `event_results_flat_dict(timeout: float | None=None) -> dict`
 
 Utility method helper to merge all raw result values that are `dict`s into a single flat `dict`.
 
@@ -396,7 +396,7 @@ results = await event.event_results_flat_dict()
 # {'key1': 'value1', 'key2': 'value2'}
 ```
 
-##### `event_results_flat_list(timeout=None) -> list`
+##### `event_results_flat_list(timeout: float | None=None) -> list`
 
 Utility method helper to merge all raw result values that are `list`s into a single flat `list`.
 
@@ -412,6 +412,8 @@ results = await event.event_results_flat_list()
 
 The placeholder object that represents the pending result from a single handler executing an event.  
 `Event.event_results` contains a `dict[PythonIdStr, EventResult]` in the shape of `{handler_id: EventResult()}`.
+
+You shouldn't need to ever directly use this class, it's an internal wrapper to track pending and completed results from each handler within `BaseEvent.event_results`.
 
 #### `EventResult` Fields
 
