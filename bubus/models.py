@@ -42,7 +42,7 @@ class BaseEvent(BaseModel):
     The base model used for all Events that flow through the EventBus system.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True, validate_default=True)
+    model_config = ConfigDict(extra='allow', arbitrary_types_allowed=True, validate_assignment=True, validate_default=True)
 
     event_type: PythonIdentifierStr | None = Field(default=None, description='Event type name')
     event_schema: str | None = Field(default=None, description='Event schema version in format ClassName@version', max_length=250)
