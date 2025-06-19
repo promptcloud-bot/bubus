@@ -153,7 +153,8 @@ await bus.wait_until_idle()
 
 ### Parallel Handler Execution
 
-Enable parallel processing of handlers for better performance:
+Enable parallel processing of handlers for better performance.  
+The tradeoff is slightly less deterministic ordering as handler execution order will not be guaranteed when run in parallel.
 
 ```python
 # Create bus with parallel handler execution
@@ -173,10 +174,11 @@ await bus.dispatch(DataEvent())
 Wait for specific events with optional filtering:
 
 ```python
-# Wait for any response event
+# Block until a specific event is seen (with optional timeout)
+request = await bus.dispatch(RequestEvent(...))
 response = await bus.expect('ResponseEvent', timeout=30)
 
-# Wait with predicate filtering
+# Block until a specific event is seen (with optional predicate filtering)
 response = await bus.expect(
     'ResponseEvent',
     predicate=lambda e: e.request_id == my_request_id,
