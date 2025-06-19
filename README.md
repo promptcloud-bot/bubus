@@ -96,7 +96,7 @@ bus.on('*', universal_handler)
 
 ### Hierarchical Event Bus Networks
 
-Create networks of event buses that forward events between each other:
+Create networks of event buses that forward events between each other (with automatic loop prevention):
 
 ```python
 # Create a hierarchy of buses
@@ -104,14 +104,14 @@ main_bus = EventBus(name='MainBus')
 auth_bus = EventBus(name='AuthBus')
 data_bus = EventBus(name='DataBus')
 
-# Forward events between buses
+# Forward events between buses (infinite loops are automatically prevented)
 main_bus.on('*', auth_bus.dispatch)
 auth_bus.on('*', data_bus.dispatch)
 
 # Events flow through the hierarchy with tracking
 event = main_bus.dispatch(MyEvent())
 await event
-print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']
+print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of busses that have already procssed the event
 ```
 
 ### Event Results Aggregation
