@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 import warnings
+import weakref
 from collections import defaultdict
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -13,6 +14,97 @@ from pydantic import BaseModel
 from uuid_extensions import uuid7str  # type: ignore
 
 from bubus.models import BaseEvent, EventHandler, PythonIdentifierStr, PythonIdStr, UUIDStr
+
+
+# Define our own QueueShutDown exception
+class QueueShutDown(Exception):
+    """Raised when putting on to or getting from a shut-down Queue."""
+
+    pass
+
+
+# Custom Queue with proper shutdown support
+class CleanShutdownQueue(asyncio.Queue):
+    """asyncio.Queue subclass that handles shutdown cleanly without warnings."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_shutdown = False
+
+    def shutdown(self, immediate=True):
+        """Shutdown the queue and clean up all pending futures."""
+        self._is_shutdown = True
+
+        # Cancel all waiting getters without triggering warnings
+        while self._getters:
+            getter = self._getters.popleft()
+            if not getter.done():
+                # Set exception instead of cancelling to avoid "Event loop is closed" errors
+                getter.set_exception(QueueShutDown())
+
+        # Cancel all waiting putters
+        while self._putters:
+            putter = self._putters.popleft()
+            if not putter.done():
+                putter.set_exception(QueueShutDown())
+
+    async def get(self):
+        """Remove and return an item from the queue, with shutdown support."""
+        while self.empty():
+            if self._is_shutdown:
+                raise QueueShutDown
+
+            getter = self._get_loop().create_future()
+            self._getters.append(getter)
+            try:
+                await getter
+            except:
+                # Clean up the getter if we're cancelled
+                getter.cancel()  # Just in case getter is not done yet.
+                try:
+                    self._getters.remove(getter)
+                except ValueError:
+                    pass
+                # Re-raise the exception
+                raise
+
+        return self.get_nowait()
+
+    async def put(self, item):
+        """Put an item into the queue, with shutdown support."""
+        while self.full():
+            if self._is_shutdown:
+                raise QueueShutDown
+
+            putter = self._get_loop().create_future()
+            self._putters.append(putter)
+            try:
+                await putter
+            except:
+                putter.cancel()  # Just in case putter is not done yet.
+                try:
+                    self._putters.remove(putter)
+                except ValueError:
+                    pass
+                raise
+
+        return self.put_nowait(item)
+
+    def put_nowait(self, item):
+        """Put an item into the queue without blocking, with shutdown support."""
+        if self._is_shutdown:
+            raise QueueShutDown
+        return super().put_nowait(item)
+
+    def get_nowait(self):
+        """Remove and return an item if one is immediately available, with shutdown support."""
+        if self._is_shutdown and self.empty():
+            raise QueueShutDown
+        return super().get_nowait()
+
+
+# Use our custom queue
+Queue = CleanShutdownQueue
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +153,7 @@ class EventBus:
 
     # Runtime State
     id: UUIDStr
-    event_queue: asyncio.Queue[BaseEvent] | None
+    event_queue: Queue[BaseEvent] | None
     event_history: dict[UUIDStr, BaseEvent]  # collected by .dispatch(<event>)
 
     _is_running: bool = False
@@ -90,27 +182,14 @@ class EventBus:
 
     def __del__(self):
         """Auto-cleanup on garbage collection"""
-        if self._is_running:
-            self._is_running = False
+        # Most cleanup should have been done by the event loop close hook
+        # This is just a fallback for any remaining cleanup
 
-        if self._runloop_task and not self._runloop_task.done():
-            try:
-                self._runloop_task.cancel()
-            except RuntimeError:
-                pass  # No event loop - that's fine
+        # Signal the run loop to stop
+        self._is_running = False
 
-            # Suppress the warning by accessing internal asyncio attributes
-            # This prevents "Task was destroyed but it is pending" warnings
-            if hasattr(self._runloop_task, '_log_destroy_pending'):
-                self._runloop_task._log_destroy_pending = False  # type: ignore
-
-            # Also try to get the exception to mark it as handled
-            try:
-                self._runloop_task.exception()
-            except (asyncio.CancelledError, asyncio.InvalidStateError):
-                pass  # Expected for cancelled or pending tasks
-            except RuntimeError:
-                pass  # No event loop - that's fine
+        # Our custom queue handles cleanup properly in shutdown()
+        # No need for manual cleanup here
 
     def __str__(self) -> str:
         icon = '🟢' if self._is_running else '🔴'
@@ -296,7 +375,10 @@ class EventBus:
 
         try:
             # Wait for the future with optional timeout
-            return await asyncio.wait_for(future, timeout=timeout)
+            if timeout is not None:
+                return await asyncio.wait_for(future, timeout=timeout)
+            else:
+                return await future
         finally:
             # Clean up handler
             event_key = event_type.__name__ if isinstance(event_type, type) else str(event_type)
@@ -308,9 +390,46 @@ class EventBus:
         if not self._is_running:
             try:
                 loop = asyncio.get_running_loop()
+
+                # Hook into the event loop's close method to cleanup before it closes
+                if not hasattr(loop, '_eventbus_close_hooked'):
+                    original_close = loop.close
+                    registered_eventbuses = weakref.WeakSet()
+
+                    def close_with_cleanup():
+                        # Clean up all registered EventBuses before closing the loop
+                        for eventbus in list(registered_eventbuses):
+                            try:
+                                # Stop the eventbus while loop is still running
+                                if eventbus._is_running:
+                                    eventbus._is_running = False
+
+                                    # Shutdown the queue properly - our custom queue will handle cleanup
+                                    if eventbus.event_queue:
+                                        eventbus.event_queue.shutdown(immediate=True)
+
+                                    if eventbus._runloop_task and not eventbus._runloop_task.done():
+                                        # Suppress warning before cancelling
+                                        if hasattr(eventbus._runloop_task, '_log_destroy_pending'):
+                                            eventbus._runloop_task._log_destroy_pending = False
+                                        eventbus._runloop_task.cancel()
+                            except Exception:
+                                pass
+
+                        # Now close the loop
+                        original_close()
+
+                    loop.close = close_with_cleanup
+                    loop._eventbus_close_hooked = True
+                    loop._eventbus_instances = registered_eventbuses
+
+                # Register this EventBus instance
+                if hasattr(loop, '_eventbus_instances'):
+                    loop._eventbus_instances.add(self)
+
                 # Create async objects if needed
                 if self.event_queue is None:
-                    self.event_queue = asyncio.Queue()
+                    self.event_queue = Queue()
                     self._runloop_lock = asyncio.Lock()
                     self._on_idle = asyncio.Event()
                     self._on_idle.clear()  # Start in a busy state unless we confirm queue is empty by running _run_loop_step() at least once
@@ -343,17 +462,20 @@ class EventBus:
         # Signal shutdown
         self._is_running = False
 
-        # Cancel the run loop task if it exists
+        # Wait for the run loop task to finish
         if self._runloop_task and not self._runloop_task.done():
-            self._runloop_task.cancel()
-            try:
-                # Wait for task to finish cancellation
-                await asyncio.wait_for(self._runloop_task, timeout=1.0)
-            except (asyncio.CancelledError, TimeoutError):
-                # Expected - task was cancelled or timed out
-                pass
-            except Exception as e:
-                logger.debug(f'Exception while stopping {self}: {e}')
+            # Give it a short time to finish cleanly
+            done, pending = await asyncio.wait({self._runloop_task}, timeout=0.1)
+
+            if not done:
+                # If it doesn't finish in time, cancel it
+                self._runloop_task.cancel()
+                try:
+                    await self._runloop_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.debug(f'Exception while stopping {self}: {e}')
 
         # Clear references
         self._runloop_task = None
@@ -371,9 +493,16 @@ class EventBus:
 
         # First wait for the queue to be empty
         # Then wait for idle state with timeout
+        join_task = asyncio.create_task(self.event_queue.join())
+        idle_task = asyncio.create_task(self._on_idle.wait())
+
         try:
-            await asyncio.wait_for(self.event_queue.join(), timeout=timeout)
-            await asyncio.wait_for(self._on_idle.wait(), timeout=timeout)
+            # Wait for queue to be empty
+            await asyncio.wait_for(join_task, timeout=timeout)
+
+            # Wait for idle state
+            await asyncio.wait_for(idle_task, timeout=timeout)
+
         except TimeoutError:
             logger.warning(
                 f'⌛️ {self} Timeout waiting for event bus to be idle after {timeout}s (processing: {len(self.events_started)})'
@@ -385,6 +514,9 @@ class EventBus:
             while self._is_running:
                 try:
                     _processed_event = await self._run_loop_step()
+                except QueueShutDown:
+                    # Queue was shut down, exit cleanly
+                    break
                 except RuntimeError as e:
                     # Event loop is closing
                     if 'Event loop is closed' in str(e) or 'no running event loop' in str(e):
@@ -400,7 +532,8 @@ class EventBus:
             # logger.debug(f'🛑 {self} Event loop task cancelled')
             pass
         finally:
-            await self.stop()
+            # Don't call stop() here as it might create new tasks
+            self._is_running = False
 
     async def _run_loop_step(
         self, event: BaseEvent | None = None, timeout: float | None = None, wait_for_timeout: float = 0.1
@@ -413,12 +546,37 @@ class EventBus:
 
         # Wait for next event with timeout to periodically check idle state
         if event is None:
+            # Check if we should stop
+            if not self._is_running:
+                return None
+
             try:
-                event = await asyncio.wait_for(self.event_queue.get(), timeout=wait_for_timeout)
-            except TimeoutError:
-                if not (self.events_pending or self.events_started or self.event_queue.qsize()):
-                    # logger.debug(f'🛑 {self} idle')
-                    self._on_idle.set()
+                # Create a task for queue.get() so we can cancel it cleanly
+                get_task = asyncio.create_task(self.event_queue.get())
+                # Suppress warnings on this task in case of cleanup
+                if hasattr(get_task, '_log_destroy_pending'):
+                    get_task._log_destroy_pending = False
+
+                # Wait with timeout
+                done, pending = await asyncio.wait({get_task}, timeout=wait_for_timeout)
+
+                if done:
+                    event = await get_task
+                else:
+                    # Timeout - cancel the get task cleanly
+                    get_task.cancel()
+                    try:
+                        await get_task
+                    except asyncio.CancelledError:
+                        pass
+
+                    # Check if we're idle
+                    if not (self.events_pending or self.events_started or self.event_queue.qsize()):
+                        self._on_idle.set()
+                    return None
+
+            except (asyncio.CancelledError, RuntimeError, QueueShutDown):
+                # Clean cancellation during shutdown or queue was shut down
                 return None
 
         logger.debug(f'🏃 {self}._run_loop_step({event}) STARTING')
@@ -540,7 +698,11 @@ class EventBus:
 
         try:
             if inspect.iscoroutinefunction(handler):
-                result = await asyncio.wait_for(handler(event), timeout=event_result.timeout)
+                # Create handler task
+                handler_task = asyncio.create_task(handler(event))
+
+                # Wait with timeout
+                result = await asyncio.wait_for(handler_task, timeout=event_result.timeout)
             else:
                 # Run sync handler directly in the main thread
                 # This blocks but ensures we have access to the event loop

@@ -90,12 +90,14 @@ class BaseEvent(BaseModel):
 
         async def wait_for_handlers_to_complete_then_return_event():
             assert self.event_completed is not None
+
             try:
                 await asyncio.wait_for(self.event_completed.wait(), timeout=self.event_timeout)
-            except TimeoutError as err:
+            except TimeoutError:
                 raise RuntimeError(
                     f'{self} waiting for results timed out after {self.event_timeout}s (being processed by {len(self.event_results)} handlers)'
-                ) from err
+                )
+
             return self
 
         return wait_for_handlers_to_complete_then_return_event().__await__()
@@ -210,19 +212,16 @@ class BaseEvent(BaseModel):
     async def event_results_by_handler_id(self, timeout: float | None = None) -> dict[PythonIdStr, Any]:
         """Get all results by handler id"""
         assert self.event_completed, 'EventResult cannot be awaited outside of an async context'
-        try:
-            await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
-        except TimeoutError:
-            pass
+
+        await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
+
         return {handler_id: await event_result for handler_id, event_result in self.event_results.items()}
 
     async def event_results_list(self, timeout: float | None = None) -> list[Any]:
         """Get all results as a list"""
         assert self.event_completed, 'EventResult cannot be awaited outside of an async context'
-        try:
-            await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
-        except TimeoutError:
-            pass
+
+        await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
 
         return [await event_result for event_result in self.event_results.values()]
 
@@ -230,10 +229,8 @@ class BaseEvent(BaseModel):
         """Merge all dict results into single dict"""
 
         assert self.event_completed, 'EventResult cannot be awaited outside of an async context'
-        try:
-            await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
-        except TimeoutError:
-            pass
+
+        await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
 
         merged_results: dict[Any, Any] = {}
         for event_result in self.event_results.values():
@@ -254,10 +251,8 @@ class BaseEvent(BaseModel):
         """Merge all list results into single list"""
 
         assert self.event_completed, 'EventResult cannot be awaited outside of an async context'
-        try:
-            await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
-        except TimeoutError:
-            pass
+
+        await asyncio.wait_for(self.event_completed.wait(), timeout=timeout or self.event_timeout)
 
         merged_results: list[Any] = []
         for event_result in self.event_results.values():
@@ -341,10 +336,11 @@ class EventResult(BaseModel):
 
         async def wait_for_handler_to_complete_and_return_result():
             assert self.completed, 'EventResult cannot be awaited outside of an async context'
+
             try:
                 await asyncio.wait_for(self.completed.wait(), timeout=self.timeout)
-            except TimeoutError as err:
-                raise RuntimeError(f'Handler {self.handler_name} timed out after {self.timeout}s') from err
+            except TimeoutError:
+                raise RuntimeError(f'Handler {self.handler_name} timed out after {self.timeout}s')
 
             if self.status == 'error' and self.error:
                 raise RuntimeError(f'Handler {self.handler_name} failed: {self.error}')
