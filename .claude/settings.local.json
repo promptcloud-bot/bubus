@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python -m pytest tests/test_eventbus.py::TestEventTypeOverride -xvs)",
       "Bash(python -m pytest tests/test_eventbus.py::TestEventTypeOverride::test_automatic_event_type_derivation -xvs)",
-      "Bash(python -m pytest tests/test_eventbus.py -x)"
+      "Bash(python -m pytest tests/test_eventbus.py -x)",
+      "Bash(pytest:*)",
+      "Bash(rg:*)"
     ],
     "deny": []
   }
