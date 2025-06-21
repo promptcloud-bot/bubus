@@ -809,7 +809,7 @@ class EventBus:
         try:
             event_json = event.model_dump_json()
             self.wal_path.parent.mkdir(parents=True, exist_ok=True)
-            async with await anyio.open_file(self.wal_path, 'a') as f:
+            async with await anyio.open_file(self.wal_path, 'a', encoding='utf-8') as f:
                 await f.write(event_json + '\n')
         except Exception as e:
             logger.error(f'❌ {self} Failed to save event {event.event_id} to WAL file: {type(e).__name__} {e}\n{event}')
