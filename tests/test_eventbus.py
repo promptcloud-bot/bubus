@@ -16,6 +16,7 @@ Tests cover:
 
 import asyncio
 import json
+import logging
 import os
 import time
 from datetime import datetime, timezone
@@ -155,12 +156,12 @@ class TestEventEnqueueing:
         """Test sync event emission"""
         bus = EventBus()
         event = SystemEventModel(event_name='startup', severity='info')
-        result = bus.dispatch(event)
 
-        # Check result and write-ahead log
-        assert isinstance(result, SystemEventModel)
-        assert result.event_type == 'SystemEventModel'
-        assert len(bus.event_history) == 1
+        with pytest.raises(RuntimeError) as e:
+            bus.dispatch(event)
+
+        assert 'no event loop is running' in str(e.value)
+        assert len(bus.event_history) == 0
 
 
 class TestHandlerRegistration:
@@ -233,8 +234,8 @@ class TestHandlerRegistration:
         assert len(end_times) == 2
 
         # Check results
-        handler1_result = next((r for r in event.event_results.values() if r.handler_name == 'slow_handler_1'), None)
-        handler2_result = next((r for r in event.event_results.values() if r.handler_name == 'slow_handler_2'), None)
+        handler1_result = next((r for r in event.event_results.values() if r.handler_name.endswith('slow_handler_1')), None)
+        handler2_result = next((r for r in event.event_results.values() if r.handler_name.endswith('slow_handler_2')), None)
         assert handler1_result is not None and handler1_result.result == 'handler1'
         assert handler2_result is not None and handler2_result.result == 'handler2'
 
@@ -298,7 +299,7 @@ class TestErrorHandling:
         results = []
 
         async def failing_handler(event: BaseEvent) -> str:
-            raise ValueError('Expected to fail')
+            raise ValueError('Expected to fail - testing error handling in event handlers')
 
         async def working_handler(event: BaseEvent) -> str:
             results.append('success')
@@ -312,11 +313,11 @@ class TestErrorHandling:
         event = await eventbus.dispatch(UserActionEvent(action='test', user_id='u1'))
 
         # Verify error capture and isolation
-        failing_result = next((r for r in event.event_results.values() if r.handler_name == 'failing_handler'), None)
+        failing_result = next((r for r in event.event_results.values() if r.handler_name.endswith('failing_handler')), None)
         assert failing_result is not None
         assert failing_result.status == 'error'
-        assert 'Expected to fail' in failing_result.error
-        working_result = next((r for r in event.event_results.values() if r.handler_name == 'working_handler'), None)
+        assert 'Expected to fail' in str(failing_result.error)
+        working_result = next((r for r in event.event_results.values() if r.handler_name.endswith('working_handler')), None)
         assert working_result is not None
         assert working_result.result == 'worked'
         assert results == ['success']
@@ -1120,9 +1121,9 @@ class TestEventResults:
         event = await eventbus.dispatch(BaseEvent(event_type='TestEvent'))
 
         # Get results by handler name
-        handler1_result = next((r for r in event.event_results.values() if r.handler_name == 'handler1'), None)
-        handler2_result = next((r for r in event.event_results.values() if r.handler_name == 'handler2'), None)
-        handler3_result = next((r for r in event.event_results.values() if r.handler_name == 'handler3'), None)
+        handler1_result = next((r for r in event.event_results.values() if r.handler_name.endswith('handler1')), None)
+        handler2_result = next((r for r in event.event_results.values() if r.handler_name.endswith('handler2')), None)
+        handler3_result = next((r for r in event.event_results.values() if r.handler_name.endswith('handler3')), None)
 
         assert handler1_result is not None and handler1_result.result == 'first'
         assert handler2_result is not None and handler2_result.result == 'second'
@@ -1145,8 +1146,8 @@ class TestEventResults:
 
         # Check both handlers ran
         assert len(result.event_results) == 2
-        early_result = next((r for r in result.event_results.values() if r.handler_name == 'early_handler'), None)
-        late_result = next((r for r in result.event_results.values() if r.handler_name == 'late_handler'), None)
+        early_result = next((r for r in result.event_results.values() if r.handler_name.endswith('early_handler')), None)
+        late_result = next((r for r in result.event_results.values() if r.handler_name.endswith('late_handler')), None)
         assert early_result is not None and early_result.result == 'early'
         assert late_result is not None and late_result.result == 'late'
 
@@ -1180,11 +1181,11 @@ class TestEventResults:
         event = await eventbus.dispatch(BaseEvent(event_type='TestEvent'))
 
         # Check results - with duplicate names, both handlers run
-        process_results = [r for r in event.event_results.values() if r.handler_name == 'process_data']
+        process_results = [r for r in event.event_results.values() if r.handler_name.endswith('process_data')]
         assert len(process_results) == 2
         assert {r.result for r in process_results} == {'version1', 'version2'}
 
-        unique_result = next((r for r in event.event_results.values() if r.handler_name == 'unique_handler'), None)
+        unique_result = next((r for r in event.event_results.values() if r.handler_name.endswith('unique_handler')), None)
         assert unique_result is not None and unique_result.result == 'unique'
 
     async def test_by_handler_id(self, eventbus):
@@ -1269,7 +1270,7 @@ class TestEventResults:
         all_errors = await event.event_results_flat_list()
 
         # Check that all errors are collected (order may vary due to handler execution)
-        assert set(all_errors) == {'error1', 'error2', 'error3', 'error4', 'error5'}
+        assert all_errors == ['error1', 'error2', 'error3', 'error4', 'error5']
 
         # Test with non-list handler
         async def single_value(event):
@@ -1279,8 +1280,8 @@ class TestEventResults:
         event_single = await eventbus.dispatch(BaseEvent(event_type='GetSingle'))
 
         result = await event_single.event_results_flat_list()
-        assert 'single' in result  # Single values are appended
-        assert len(result) == 1
+        assert 'single' not in result  # Single values should be skipped, as they are not lists
+        assert len(result) == 0
 
     async def test_by_handler_name_access(self, eventbus):
         """Test accessing results by handler name"""
@@ -1297,8 +1298,8 @@ class TestEventResults:
         event = await eventbus.dispatch(BaseEvent(event_type='TestEvent'))
 
         # Access results by handler name
-        handler_a_result = next((r for r in event.event_results.values() if r.handler_name == 'handler_a'), None)
-        handler_b_result = next((r for r in event.event_results.values() if r.handler_name == 'handler_b'), None)
+        handler_a_result = next((r for r in event.event_results.values() if r.handler_name.endswith('handler_a')), None)
+        handler_b_result = next((r for r in event.event_results.values() if r.handler_name.endswith('handler_b')), None)
 
         assert handler_a_result is not None and handler_a_result.result == 'result_a'
         assert handler_b_result is not None and handler_b_result.result == 'result_b'
@@ -1313,11 +1314,11 @@ class TestEventResults:
         event = await eventbus.dispatch(BaseEvent(event_type='TestEvent'))
 
         # Access result by handler name
-        my_handler_result = next((r for r in event.event_results.values() if r.handler_name == 'my_handler'), None)
+        my_handler_result = next((r for r in event.event_results.values() if r.handler_name.endswith('my_handler')), None)
         assert my_handler_result is not None and my_handler_result.result == 'my_result'
 
         # Check missing handler returns None
-        missing_result = next((r for r in event.event_results.values() if r.handler_name == 'missing'), None)
+        missing_result = next((r for r in event.event_results.values() if r.handler_name.endswith('missing')), None)
         assert missing_result is None
 
 
@@ -1366,9 +1367,9 @@ class TestEventBusForwarding:
             event = await event
 
             # All handlers from all buses should be visible
-            bus1_result = next((r for r in event.event_results.values() if r.handler_name == 'bus1_handler'), None)
-            bus2_result = next((r for r in event.event_results.values() if r.handler_name == 'bus2_handler'), None)
-            bus3_result = next((r for r in event.event_results.values() if r.handler_name == 'bus3_handler'), None)
+            bus1_result = next((r for r in event.event_results.values() if r.handler_name.endswith('bus1_handler')), None)
+            bus2_result = next((r for r in event.event_results.values() if r.handler_name.endswith('bus2_handler')), None)
+            bus3_result = next((r for r in event.event_results.values() if r.handler_name.endswith('bus3_handler')), None)
 
             assert bus1_result is not None and bus1_result.result == 'from_bus1'
             assert bus2_result is not None and bus2_result.result == 'from_bus2'
@@ -1412,9 +1413,9 @@ class TestEventBusForwarding:
             event = await event
 
             # Check results from both buses
-            main_result = next((r for r in event.event_results.values() if r.handler_name == 'main_handler'), None)
-            plugin1_result = next((r for r in event.event_results.values() if r.handler_name == 'plugin_handler1'), None)
-            plugin2_result = next((r for r in event.event_results.values() if r.handler_name == 'plugin_handler2'), None)
+            main_result = next((r for r in event.event_results.values() if r.handler_name.endswith('main_handler')), None)
+            plugin1_result = next((r for r in event.event_results.values() if r.handler_name.endswith('plugin_handler1')), None)
+            plugin2_result = next((r for r in event.event_results.values() if r.handler_name.endswith('plugin_handler2')), None)
 
             assert main_result is not None and main_result.result == 'main_result'
             assert plugin1_result is not None and plugin1_result.result == 'plugin_result1'
@@ -1431,7 +1432,7 @@ class TestEventBusForwarding:
 class TestComplexIntegration:
     """Complex integration test with all features"""
 
-    async def test_complex_multi_bus_scenario(self):
+    async def test_complex_multi_bus_scenario(self, caplog):
         """Test complex scenario with multiple buses, duplicate names, and all query methods"""
         # Create a hierarchy of buses
         app_bus = EventBus(name='AppBus')
@@ -1492,8 +1493,8 @@ class TestComplexIntegration:
 
             # Test that all handlers ran
             # Count handlers by name
-            validate_results = [r for r in event.event_results.values() if r.handler_name == 'validate']
-            process_results = [r for r in event.event_results.values() if r.handler_name == 'process']
+            validate_results = [r for r in event.event_results.values() if r.handler_name.endswith('validate')]
+            process_results = [r for r in event.event_results.values() if r.handler_name.endswith('process')]
 
             # Should have multiple validate and process handlers from different buses
             assert len(validate_results) >= 3  # One per bus
@@ -1505,14 +1506,18 @@ class TestComplexIntegration:
             assert 'DataBus' in event.event_path
 
             # Test flat dict merging
-            dict_result = await event.event_results_flat_dict()
+            with caplog.at_level(logging.WARNING):
+                dict_result = await event.event_results_flat_dict()
             # Should have merged all dict returns
             assert 'app_valid' in dict_result and 'auth_valid' in dict_result and 'data_valid' in dict_result
+            assert 'expects all handlers to return a dict' in caplog.text
 
             # Test flat list
-            list_result = await event.event_results_flat_list()
+            with caplog.at_level(logging.WARNING):
+                list_result = await event.event_results_flat_list()
             # Should include all list items and non-list values
             assert any('log' in str(item) for item in list_result)
+            assert 'expects all handlers to return a list' in caplog.text
 
         finally:
             await app_bus.stop()

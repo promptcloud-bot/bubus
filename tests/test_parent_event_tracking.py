@@ -61,7 +61,7 @@ class TestParentEventTracking:
         # Verify parent processed
         await parent_result
         parent_handler_result = next(
-            (r for r in parent_result.event_results.values() if r.handler_name == 'parent_handler'), None
+            (r for r in parent_result.event_results.values() if r.handler_name.endswith('parent_handler')), None
         )
         assert parent_handler_result is not None and parent_handler_result.result == 'parent_handled'
 
@@ -74,19 +74,19 @@ class TestParentEventTracking:
         """Test parent tracking across multiple levels"""
         events_by_level: dict[str, BaseEvent | None] = {'parent': None, 'child': None, 'grandchild': None}
 
-        async def parent_handler(event: ParentEvent) -> str:
+        async def parent_handler(event: BaseEvent) -> str:
             events_by_level['parent'] = event
             child = ChildEvent(data='child_data')
             eventbus.dispatch(child)
             return 'parent'
 
-        async def child_handler(event: ChildEvent) -> str:
+        async def child_handler(event: BaseEvent) -> str:
             events_by_level['child'] = event
             grandchild = GrandchildEvent(value=42)
             eventbus.dispatch(grandchild)
             return 'child'
 
-        async def grandchild_handler(event: GrandchildEvent) -> str:
+        async def grandchild_handler(event: BaseEvent) -> str:
             events_by_level['grandchild'] = event
             return 'grandchild'
 
@@ -116,7 +116,7 @@ class TestParentEventTracking:
         """Test multiple child events from same parent"""
         child_events: list[BaseEvent] = []
 
-        async def parent_handler(event: ParentEvent) -> str:
+        async def parent_handler(event: BaseEvent) -> str:
             # Dispatch multiple children
             for i in range(3):
                 child = ChildEvent(data=f'child_{i}')
@@ -141,14 +141,14 @@ class TestParentEventTracking:
         """Test parent tracking with parallel handlers"""
         events_from_handlers: dict[str, list[BaseEvent]] = {'h1': [], 'h2': []}
 
-        async def handler1(event: ParentEvent) -> str:
+        async def handler1(event: BaseEvent) -> str:
             await asyncio.sleep(0.01)  # Simulate work
             child = ChildEvent(data='from_h1')
             eventbus.dispatch(child)
             events_from_handlers['h1'].append(child)
             return 'h1'
 
-        async def handler2(event: ParentEvent) -> str:
+        async def handler2(event: BaseEvent) -> str:
             await asyncio.sleep(0.02)  # Different timing
             child = ChildEvent(data='from_h2')
             eventbus.dispatch(child)
@@ -175,7 +175,7 @@ class TestParentEventTracking:
         """Test that explicitly set event_parent_id is not overridden"""
         captured_child = None
 
-        async def parent_handler(event: ParentEvent) -> str:
+        async def parent_handler(event: BaseEvent) -> str:
             nonlocal captured_child
             # Create child with explicit event_parent_id
             explicit_parent_id = '01234567-89ab-cdef-0123-456789abcdef'
@@ -201,17 +201,17 @@ class TestParentEventTracking:
         bus1 = EventBus(name='Bus1')
         bus2 = EventBus(name='Bus2')
 
-        captured_events: list[tuple[str, BaseEvent, BaseEvent]] = []
+        captured_events: list[tuple[str, BaseEvent, BaseEvent | None]] = []
 
-        async def bus1_handler(event: ParentEvent) -> str:
+        async def bus1_handler(event: BaseEvent) -> str:
             # Dispatch child to bus2
             child = ChildEvent(data='cross_bus_child')
             bus2.dispatch(child)
             captured_events.append(('bus1', event, child))
             return 'bus1_handled'
 
-        async def bus2_handler(event: ChildEvent) -> str:
-            captured_events.append(('bus2', event))
+        async def bus2_handler(event: BaseEvent) -> str:
+            captured_events.append(('bus2', event, None))
             return 'bus2_handled'
 
         bus1.on('ParentEvent', bus1_handler)
@@ -228,9 +228,9 @@ class TestParentEventTracking:
             # Verify parent tracking works across buses
             assert len(captured_events) == 2
             _, _parent_event, child_event = captured_events[0]
-            _, received_child = captured_events[1]
+            _, received_child, _ = captured_events[1]
 
-            assert child_event.event_parent_id == parent.event_id
+            assert child_event is not None and child_event.event_parent_id == parent.event_id
             assert received_child.event_parent_id == parent.event_id
 
         finally:
@@ -241,7 +241,7 @@ class TestParentEventTracking:
         """Test parent tracking works with sync handlers"""
         child_events: list[BaseEvent] = []
 
-        def sync_parent_handler(event: ParentEvent) -> str:
+        def sync_parent_handler(event: BaseEvent) -> str:
             # Sync handler that dispatches child
             child = ChildEvent(data='from_sync')
             eventbus.dispatch(child)
@@ -263,14 +263,16 @@ class TestParentEventTracking:
         """Test parent tracking when handler errors occur"""
         child_events: list[BaseEvent] = []
 
-        async def failing_handler(event: ParentEvent) -> str:
+        async def failing_handler(event: BaseEvent) -> str:
             # Dispatch child before failing
             child = ChildEvent(data='before_error')
             eventbus.dispatch(child)
             child_events.append(child)
-            raise ValueError('Handler failed')
+            raise ValueError(
+                'Handler error - expected to fail - testing that parent event tracking works even when handlers error'
+            )
 
-        async def success_handler(event: ParentEvent) -> str:
+        async def success_handler(event: BaseEvent) -> str:
             # This should still run
             child = ChildEvent(data='after_error')
             eventbus.dispatch(child)
@@ -289,7 +291,3 @@ class TestParentEventTracking:
         assert len(child_events) == 2
         for child in child_events:
             assert child.event_parent_id == parent.event_id
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])

@@ -3,17 +3,20 @@ import inspect
 import logging
 import warnings
 import weakref
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import anyio
 from pydantic import BaseModel
-from uuid_extensions import uuid7str  # type: ignore
+from uuid_extensions import uuid7str
 
-from bubus.models import BaseEvent, EventHandler, PythonIdentifierStr, PythonIdStr, UUIDStr
+from bubus.models import BUBUS_LOG_LEVEL, BaseEvent, EventHandler, PythonIdentifierStr, PythonIdStr, UUIDStr, get_handler_name
+
+logger = logging.getLogger('bubus')
+logger.setLevel(BUBUS_LOG_LEVEL)
 
 
 # Define our own QueueShutDown exception
@@ -23,15 +26,17 @@ class QueueShutDown(Exception):
     pass
 
 
-# Custom Queue with proper shutdown support
-class CleanShutdownQueue(asyncio.Queue):
+QueueEntryType = TypeVar('QueueEntryType', bound=BaseEvent)
+
+
+class CleanShutdownQueue(asyncio.Queue[QueueEntryType]):
     """asyncio.Queue subclass that handles shutdown cleanly without warnings."""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._is_shutdown = False
+    _is_shutdown: bool = False
+    _getters: deque[asyncio.Future[QueueEntryType]]
+    _putters: deque[asyncio.Future[QueueEntryType]]
 
-    def shutdown(self, immediate=True):
+    def shutdown(self, immediate: bool = True):
         """Shutdown the queue and clean up all pending futures."""
         self._is_shutdown = True
 
@@ -48,13 +53,14 @@ class CleanShutdownQueue(asyncio.Queue):
             if not putter.done():
                 putter.set_exception(QueueShutDown())
 
-    async def get(self):
+    async def get(self) -> QueueEntryType:
         """Remove and return an item from the queue, with shutdown support."""
         while self.empty():
             if self._is_shutdown:
                 raise QueueShutDown
 
-            getter = self._get_loop().create_future()
+            getter: asyncio.Future[QueueEntryType] = self._get_loop().create_future()  # type: ignore
+            assert isinstance(getter, asyncio.Future)
             self._getters.append(getter)
             try:
                 await getter
@@ -70,13 +76,14 @@ class CleanShutdownQueue(asyncio.Queue):
 
         return self.get_nowait()
 
-    async def put(self, item):
+    async def put(self, item: QueueEntryType) -> None:
         """Put an item into the queue, with shutdown support."""
         while self.full():
             if self._is_shutdown:
                 raise QueueShutDown
 
-            putter = self._get_loop().create_future()
+            putter: asyncio.Future[QueueEntryType] = self._get_loop().create_future()  # type: ignore
+            assert isinstance(putter, asyncio.Future)
             self._putters.append(putter)
             try:
                 await putter
@@ -90,23 +97,17 @@ class CleanShutdownQueue(asyncio.Queue):
 
         return self.put_nowait(item)
 
-    def put_nowait(self, item):
+    def put_nowait(self, item: QueueEntryType) -> None:
         """Put an item into the queue without blocking, with shutdown support."""
         if self._is_shutdown:
             raise QueueShutDown
         return super().put_nowait(item)
 
-    def get_nowait(self):
+    def get_nowait(self) -> QueueEntryType:
         """Remove and return an item if one is immediately available, with shutdown support."""
         if self._is_shutdown and self.empty():
             raise QueueShutDown
         return super().get_nowait()
-
-
-# Use our custom queue
-Queue = CleanShutdownQueue
-
-logger = logging.getLogger(__name__)
 
 
 # Context variable to track the current event being processed (for setting event_parent_id from inside a child event)
@@ -146,14 +147,14 @@ class EventBus:
     """
 
     # Class Attributes
-    name: PythonIdentifierStr
+    name: PythonIdentifierStr = 'EventBus'
     parallel_handlers: bool = False
     wal_path: Path | None = None
-    handlers: dict[PythonIdStr, list[EventHandler]]  # collected by .on(<event_type>, <handler>)
 
     # Runtime State
-    id: UUIDStr
-    event_queue: Queue[BaseEvent] | None
+    id: UUIDStr = '00000000-0000-0000-0000-000000000000'
+    handlers: dict[PythonIdStr, list[EventHandler]]  # collected by .on(<event_type>, <handler>)
+    event_queue: CleanShutdownQueue[BaseEvent] | None
     event_history: dict[UUIDStr, BaseEvent]  # collected by .dispatch(<event>)
 
     _is_running: bool = False
@@ -165,7 +166,7 @@ class EventBus:
         self, name: PythonIdentifierStr | None = None, wal_path: Path | str | None = None, parallel_handlers: bool = False
     ):
         self.id = uuid7str()
-        self.name = name or f'EventBus_{self.id[-8:]}'
+        self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
         assert self.name.isidentifier(), f'EventBus name must be a unique identifier string, got: {self.name}'
         self.event_queue = None
         self.event_history = {}
@@ -239,15 +240,12 @@ class EventBus:
             event_key = str(event_pattern)
 
         # Check for duplicate handler names
-        if hasattr(handler, '__self__'):
-            handler_name = f'{handler.__self__}.{handler.__name__}()'  # pyright: ignore[reportFunctionMemberAccess]
-        else:
-            handler_name = handler.__name__
-        existing_names = [h.__name__ for h in self.handlers.get(event_key, [])]
+        new_handler_name = get_handler_name(handler)
+        existing_registered_handlers = [get_handler_name(h) for h in self.handlers.get(event_key, [])]
 
-        if handler_name in existing_names:
+        if new_handler_name in existing_registered_handlers:
             warnings.warn(
-                f"⚠️  Handler '{handler_name}' already registered for event '{event_key}'. "
+                f"⚠️ {self} Handler {new_handler_name} already registered for event '{event_key}'. "
                 f'This may cause ambiguous results when using name-based access. '
                 f'Consider using unique function names.',
                 UserWarning,
@@ -256,7 +254,7 @@ class EventBus:
 
         # Register handler
         self.handlers[event_key].append(handler)
-        logger.debug(f'👂 {self}.on({event_key}, {handler_name}) Registered event handler')
+        logger.debug(f'👂 {self}.on({event_key}, {get_handler_name(handler)}) Registered event handler')
 
     def dispatch(self, event: BaseEvent) -> BaseEvent:
         """
@@ -276,6 +274,12 @@ class EventBus:
                 # 2. returns a pending SomeEvent() with pending results in .event_results
                 # 3. awaiting .event_result() waits until all pending results are complete, and returns the raw result value of the first one
         """
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            raise RuntimeError(f'{self}.dispatch() called but no event loop is running! Event not queued: {event.event_type}')
+
         assert event.event_id, 'Missing event.event_id: UUIDStr = uuid7str()'
         assert event.event_created_at, 'Missing event.event_created_at: datetime = datetime.now(UTC)'
         assert event.event_type and event.event_type.isidentifier(), 'Missing event.event_type: str'
@@ -313,7 +317,7 @@ class EventBus:
         if self.event_queue:
             try:
                 self.event_queue.put_nowait(event)
-                logger.debug(
+                logger.info(
                     f'🗣️ {self}.dispatch({event.event_type}) ➡️ Event#{event.event_id[-8:]}({event.event_status} #{self.event_queue.qsize()})'
                 )
             except asyncio.QueueFull:
@@ -368,7 +372,9 @@ class EventBus:
             if not future.done() and (predicate is None or predicate(event)):
                 future.set_result(event)
 
-        notify_expect_handler.__name__ = f'{self}.expect({event_type}, predicate={predicate and id(predicate)})@{_log_pretty_path(inspect.currentframe().f_code.co_filename)}:{inspect.currentframe().f_lineno}'  # add file and line number to the name
+        current_frame = inspect.currentframe()
+        assert current_frame
+        notify_expect_handler.__name__ = f'{self}.expect({event_type}, predicate={predicate and id(predicate)})@{_log_pretty_path(current_frame.f_code.co_filename)}:{current_frame.f_lineno}'  # add file and line number to the name
 
         # Register temporary handler
         self.on(event_type, notify_expect_handler)
@@ -392,11 +398,12 @@ class EventBus:
                 loop = asyncio.get_running_loop()
 
                 # Hook into the event loop's close method to cleanup before it closes
+                # this is necessary to silence "RuntimeError: no running event loop" and "event loop is closed" errors on shutdown
                 if not hasattr(loop, '_eventbus_close_hooked'):
                     original_close = loop.close
-                    registered_eventbuses = weakref.WeakSet()
+                    registered_eventbuses: weakref.WeakSet[EventBus] = weakref.WeakSet()
 
-                    def close_with_cleanup():
+                    def close_with_cleanup() -> None:
                         # Clean up all registered EventBuses before closing the loop
                         for eventbus in list(registered_eventbuses):
                             try:
@@ -411,7 +418,7 @@ class EventBus:
                                     if eventbus._runloop_task and not eventbus._runloop_task.done():
                                         # Suppress warning before cancelling
                                         if hasattr(eventbus._runloop_task, '_log_destroy_pending'):
-                                            eventbus._runloop_task._log_destroy_pending = False
+                                            eventbus._runloop_task._log_destroy_pending = False  # type: ignore
                                         eventbus._runloop_task.cancel()
                             except Exception:
                                 pass
@@ -420,19 +427,20 @@ class EventBus:
                         original_close()
 
                     loop.close = close_with_cleanup
-                    loop._eventbus_close_hooked = True
-                    loop._eventbus_instances = registered_eventbuses
+                    loop._eventbus_close_hooked = True  # type: ignore
+                    loop._eventbus_instances = registered_eventbuses  # type: ignore
 
-                # Register this EventBus instance
+                # Register this EventBus instance in the WeakSet of all EventBuses on the loop
                 if hasattr(loop, '_eventbus_instances'):
-                    loop._eventbus_instances.add(self)
+                    loop._eventbus_instances.add(self)  # type: ignore
 
                 # Create async objects if needed
                 if self.event_queue is None:
-                    self.event_queue = Queue()
+                    self.event_queue = CleanShutdownQueue[BaseEvent]()
                     self._runloop_lock = asyncio.Lock()
                     self._on_idle = asyncio.Event()
                     self._on_idle.clear()  # Start in a busy state unless we confirm queue is empty by running _run_loop_step() at least once
+
                 # Create and start the run loop task
                 self._runloop_task = loop.create_task(self._run_loop(), name=f'{self}._run_loop')
                 self._is_running = True
@@ -465,7 +473,7 @@ class EventBus:
         # Wait for the run loop task to finish
         if self._runloop_task and not self._runloop_task.done():
             # Give it a short time to finish cleanly
-            done, pending = await asyncio.wait({self._runloop_task}, timeout=0.1)
+            done, _pending = await asyncio.wait({self._runloop_task}, timeout=0.1)
 
             if not done:
                 # If it doesn't finish in time, cancel it
@@ -474,8 +482,9 @@ class EventBus:
                     await self._runloop_task
                 except asyncio.CancelledError:
                     pass
-                except Exception as e:
-                    logger.debug(f'Exception while stopping {self}: {e}')
+                except Exception:
+                    # logger.debug(f'Exception while stopping {self}: {e}')
+                    pass
 
         # Clear references
         self._runloop_task = None
@@ -522,10 +531,10 @@ class EventBus:
                     if 'Event loop is closed' in str(e) or 'no running event loop' in str(e):
                         break
                     else:
-                        logger.exception(f'❌ {self} Runtime error in event loop: {e}')
+                        logger.exception(f'❌ {self} Runtime error in event loop: {type(e).__name__} {e}', exc_info=True)
                         # Continue running even if there's an error
                 except Exception as e:
-                    logger.exception(f'❌ {self} Error in event loop: {type(e).__name__} {e}')
+                    logger.exception(f'❌ {self} Error in event loop: {type(e).__name__} {e}', exc_info=True)
                     # Continue running even if there's an error
         except asyncio.CancelledError:
             # Task was cancelled, clean exit
@@ -535,49 +544,51 @@ class EventBus:
             # Don't call stop() here as it might create new tasks
             self._is_running = False
 
+    async def _get_next_event(self, wait_for_timeout: float = 0.1) -> BaseEvent | None:
+        """Get the next event from the queue"""
+
+        assert self._runloop_lock and self._on_idle and self.event_queue, (
+            'EventBus._start() must be called before _get_next_event()'
+        )
+        if not self._is_running:
+            return None
+
+        try:
+            # Create a task for queue.get() so we can cancel it cleanly
+            get_next_queued_event = asyncio.create_task(self.event_queue.get())
+            if hasattr(get_next_queued_event, '_log_destroy_pending'):
+                get_next_queued_event._log_destroy_pending = False  # type: ignore  # Suppress warnings on this task in case of cleanup
+
+            # Wait for next event with timeout
+            has_next_event, _pending = await asyncio.wait({get_next_queued_event}, timeout=wait_for_timeout)
+            if has_next_event:
+                return await get_next_queued_event  # await to actually resolve it to the next event
+            else:
+                # Get task timed out, cancel it cleanly to suppress warnings
+                get_next_queued_event.cancel()
+
+                # Check if we're idle, if so, set the idle flag
+                if not (self.events_pending or self.events_started or self.event_queue.qsize()):
+                    self._on_idle.set()
+                return None
+
+        except (asyncio.CancelledError, RuntimeError, QueueShutDown):
+            # Clean cancellation during shutdown or queue was shut down
+            return None
+
     async def _run_loop_step(
         self, event: BaseEvent | None = None, timeout: float | None = None, wait_for_timeout: float = 0.1
     ) -> BaseEvent | None:
         """Process a single event from the queue"""
-
-        assert self._runloop_lock and self._on_idle and self.event_queue, (
+        assert self._on_idle and self._runloop_lock and self.event_queue, (
             'EventBus._start() must be called before _run_loop_step()'
         )
 
         # Wait for next event with timeout to periodically check idle state
         if event is None:
-            # Check if we should stop
-            if not self._is_running:
-                return None
-
-            try:
-                # Create a task for queue.get() so we can cancel it cleanly
-                get_task = asyncio.create_task(self.event_queue.get())
-                # Suppress warnings on this task in case of cleanup
-                if hasattr(get_task, '_log_destroy_pending'):
-                    get_task._log_destroy_pending = False
-
-                # Wait with timeout
-                done, pending = await asyncio.wait({get_task}, timeout=wait_for_timeout)
-
-                if done:
-                    event = await get_task
-                else:
-                    # Timeout - cancel the get task cleanly
-                    get_task.cancel()
-                    try:
-                        await get_task
-                    except asyncio.CancelledError:
-                        pass
-
-                    # Check if we're idle
-                    if not (self.events_pending or self.events_started or self.event_queue.qsize()):
-                        self._on_idle.set()
-                    return None
-
-            except (asyncio.CancelledError, RuntimeError, QueueShutDown):
-                # Clean cancellation during shutdown or queue was shut down
-                return None
+            event = await self._get_next_event(wait_for_timeout=wait_for_timeout)
+        if event is None:
+            return None
 
         logger.debug(f'🏃 {self}._run_loop_step({event}) STARTING')
 
@@ -617,7 +628,6 @@ class EventBus:
         filtered_handlers: dict[PythonIdStr, EventHandler] = {}
         for handler in applicable_handlers:
             if self._would_create_loop(event, handler):
-                logger.debug(f'⚠️ {self} Skipping {handler.__name__}#{str(id(handler))[-4:]}({event}) to prevent infinite loop')
                 continue
             else:
                 handler_id = str(id(handler))
@@ -639,7 +649,8 @@ class EventBus:
             handler_tasks: dict[PythonIdStr, tuple[asyncio.Task[Any], EventHandler]] = {}
             for handler_id, handler in applicable_handlers.items():
                 task = asyncio.create_task(
-                    self._execute_sync_or_async_handler(event, handler, timeout=timeout), name=f'{self}.{handler.__name__}'
+                    self._execute_sync_or_async_handler(event, handler, timeout=timeout),
+                    name=f'{self}._execute_sync_or_async_handler({event}, {get_handler_name(handler)})',
                 )
                 handler_tasks[handler_id] = (task, handler)
 
@@ -658,14 +669,14 @@ class EventBus:
                 except Exception as e:
                     # Error already logged and recorded in _execute_sync_or_async_handler
                     logger.debug(
-                        f'❌ {self} Handler {handler.__name__}#{str(id(handler))[-4:]}({event}) failed with {type(e).__name__}: {e}'
+                        f'❌ {self} Handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) failed with {type(e).__name__}: {e}'
                     )
                     pass
 
     async def _execute_sync_or_async_handler(self, event: BaseEvent, handler: EventHandler, timeout: float | None = None) -> Any:
         """Safely execute a single handler with deadlock detection"""
 
-        logger.debug(f' ↳ {self}._execute_handler({event}, handler={handler.__name__}#{str(id(handler))[-4:]})')
+        logger.debug(f' ↳ {self}._execute_handler({event}, handler={get_handler_name(handler)}#{str(id(handler))[-4:]})')
 
         # Check if this handler has already been executed for this event
         handler_id = str(id(handler))
@@ -673,7 +684,7 @@ class EventBus:
             existing_result = event.event_results[handler_id]
             if existing_result.started_at is not None:
                 raise RuntimeError(
-                    f'Handler {handler.__name__}#{handler_id[-4:]} has already been executed for event {event.event_id}. '
+                    f'Handler {get_handler_name(handler)}#{handler_id[-4:]} has already been executed for event {event.event_id}. '
                     f'Previous execution started at {existing_result.started_at}'
                 )
 
@@ -689,47 +700,54 @@ class EventBus:
         async def deadlock_monitor():
             await asyncio.sleep(15.0)
             logger.warning(
-                f'⚠️ {self}.{handler.__name__}() has been running for >15s on event. Possible slow processing or deadlock.\n'
-                '(handler could be trying to await its own result or another blocked async task).\n'
-                f'{self}.{handler.__name__}({event})'
+                f'⚠️ {self} handler {get_handler_name(handler)}() has been running for >15s on event. Possible slow processing or deadlock.\n'
+                '(handler could be trying to await its own result or could be blocked by another async task).\n'
+                f'{get_handler_name(handler)}({event})'
             )
 
-        monitor_task = asyncio.create_task(deadlock_monitor(), name=f'{self}.deadlock_monitor.{handler.__name__}')
+        monitor_task = asyncio.create_task(
+            deadlock_monitor(), name=f'{self}.deadlock_monitor({event}, {get_handler_name(handler)}#{handler_id[-4:]})'
+        )
 
         try:
             if inspect.iscoroutinefunction(handler):
-                # Create handler task
-                handler_task = asyncio.create_task(handler(event))
-
-                # Wait with timeout
-                result = await asyncio.wait_for(handler_task, timeout=event_result.timeout)
+                # Create handler task if it's an async handler function
+                event_handler_task = asyncio.create_task(handler(event))
+                result_value: Any = await asyncio.wait_for(event_handler_task, timeout=event_result.timeout)
+            elif inspect.isfunction(handler) or inspect.ismethod(handler):
+                # If handler function is sync function, run it directly in the main thread
+                # This blocks but ensures we have access to the event loop, dont run it in a subthread!
+                result_value: Any = handler(event)
             else:
-                # Run sync handler directly in the main thread
-                # This blocks but ensures we have access to the event loop
-                result = handler(event)
-                logger.debug(f'    ↳ Sync handler {handler.__name__}#{handler_id[-4:]} returned: {result}')
+                raise ValueError(f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}')
+
+            logger.debug(
+                f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__} {result_value}'
+            )
             # Cancel the monitor task since handler completed successfully
             monitor_task.cancel()
 
             # Record successful result
-            event.event_result_update(handler=handler, eventbus=self, result=result)
+            event.event_result_update(handler=handler, eventbus=self, result=result_value)
             if handler_id in event.event_results:
-                logger.debug(
-                    f'    ↳ Updated result for {handler.__name__}#{handler_id[-4:]}: {event.event_results[handler_id].status}'
-                )
+                # logger.debug(
+                #     f'    ↳ Updated result for {get_handler_name(handler)}#{handler_id[-4:]}: {event.event_results[handler_id].status}'
+                # )
+                pass
             else:
-                logger.error(f'    ↳ ERROR: Result not found for {handler.__name__}#{handler_id[-4:]} after update!')
-            return result
+                logger.error(f'    ↳ ERROR: Result not found for {get_handler_name(handler)}#{handler_id[-4:]} after update!')
+            return result_value
 
         except Exception as e:
             # Cancel the monitor task on error too
             monitor_task.cancel()
 
             # Record error
-            event.event_result_update(handler=handler, eventbus=self, error=str(e))
+            event.event_result_update(handler=handler, eventbus=self, error=e)
 
             logger.exception(
-                f'❌ {self} Error in handler {handler.__name__}#{str(id(handler))[-4:]}({event}): {type(e).__name__} {e}'
+                f'❌ {self} Error in event handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) -> {type(e).__name__}({e})',
+                exc_info=True,
             )
             raise
         finally:
@@ -743,16 +761,23 @@ class EventBus:
             except asyncio.CancelledError:
                 pass  # Expected when we cancel the monitor
             except Exception as e:
-                # logger.debug(f"❌ {self} Handler monitor task cleanup error for {handler.__name__}#{str(id(handler))[-4:]}({event}): {type(e).__name__}: {e}")
+                # logger.debug(f"❌ {self} Handler monitor task cleanup error for {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}): {type(e).__name__}: {e}")
                 pass
 
     def _would_create_loop(self, event: BaseEvent, handler: EventHandler) -> bool:
         """Check if calling this handler would create a loop (i.e. re-process an event that has already been processed by this EventBus)"""
 
+        assert inspect.isfunction(handler) or inspect.iscoroutinefunction(handler) or inspect.ismethod(handler), (
+            f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}'
+        )
+
         # First check: If handler is another EventBus.dispatch method, check if we're forwarding to another bus that it's already been processed by
-        if hasattr(handler, '__self__') and isinstance(handler.__self__, EventBus) and handler.__name__ == 'dispatch':  # pyright: ignore[reportFunctionMemberAccess]
-            target_bus = handler.__self__  # pyright: ignore[reportFunctionMemberAccess]
+        if hasattr(handler, '__self__') and isinstance(handler.__self__, EventBus) and handler.__name__ == 'dispatch':  # pyright: ignore[reportFunctionMemberAccess]  # type: ignore
+            target_bus = handler.__self__  # pyright: ignore[reportFunctionMemberAccess]  # type: ignore
             if target_bus.name in event.event_path:
+                logger.debug(
+                    f'⚠️ {self} handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) skipped to prevent infinite loop with {target_bus.name}'
+                )
                 return True
 
         # Second check: Check if there's already a completed result for this handler ID
@@ -762,7 +787,7 @@ class EventBus:
             existing_result = event.event_results[handler_id]
             if existing_result.completed_at is not None:
                 logger.debug(
-                    f'⚠️ Preventing loop: handler {handler.__name__} (id={handler_id}) already completed at {existing_result.completed_at} for event {event.event_id}'
+                    f'⚠️ {self} handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) already completed @ {existing_result.completed_at} for event {event.event_id} (will not re-run)'
                 )
                 return True
 
