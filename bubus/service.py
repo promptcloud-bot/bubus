@@ -22,6 +22,7 @@ logger.setLevel(BUBUS_LOG_LEVEL)
 # Define our own QueueShutDown exception
 class QueueShutDown(Exception):
     """Raised when putting on to or getting from a shut-down Queue."""
+
     pass
 
 
@@ -273,12 +274,12 @@ class EventBus:
                 # 2. returns a pending SomeEvent() with pending results in .event_results
                 # 3. awaiting .event_result() waits until all pending results are complete, and returns the raw result value of the first one
         """
-        
+
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             raise RuntimeError(f'{self}.dispatch() called but no event loop is running! Event not queued: {event.event_type}')
-        
+
         assert event.event_id, 'Missing event.event_id: UUIDStr = uuid7str()'
         assert event.event_created_at, 'Missing event.event_created_at: datetime = datetime.now(UTC)'
         assert event.event_type and event.event_type.isidentifier(), 'Missing event.event_type: str'
@@ -556,12 +557,12 @@ class EventBus:
             # Create a task for queue.get() so we can cancel it cleanly
             get_next_queued_event = asyncio.create_task(self.event_queue.get())
             if hasattr(get_next_queued_event, '_log_destroy_pending'):
-                get_next_queued_event._log_destroy_pending = False       # type: ignore  # Suppress warnings on this task in case of cleanup
+                get_next_queued_event._log_destroy_pending = False  # type: ignore  # Suppress warnings on this task in case of cleanup
 
             # Wait for next event with timeout
             has_next_event, _pending = await asyncio.wait({get_next_queued_event}, timeout=wait_for_timeout)
             if has_next_event:
-                return await get_next_queued_event   # await to actually resolve it to the next event
+                return await get_next_queued_event  # await to actually resolve it to the next event
             else:
                 # Get task timed out, cancel it cleanly to suppress warnings
                 get_next_queued_event.cancel()
@@ -579,7 +580,9 @@ class EventBus:
         self, event: BaseEvent | None = None, timeout: float | None = None, wait_for_timeout: float = 0.1
     ) -> BaseEvent | None:
         """Process a single event from the queue"""
-        assert self._on_idle and self._runloop_lock and self.event_queue, 'EventBus._start() must be called before _run_loop_step()'
+        assert self._on_idle and self._runloop_lock and self.event_queue, (
+            'EventBus._start() must be called before _run_loop_step()'
+        )
 
         # Wait for next event with timeout to periodically check idle state
         if event is None:
@@ -647,7 +650,7 @@ class EventBus:
             for handler_id, handler in applicable_handlers.items():
                 task = asyncio.create_task(
                     self._execute_sync_or_async_handler(event, handler, timeout=timeout),
-                    name=f'{self}._execute_sync_or_async_handler({event}, {get_handler_name(handler)})'
+                    name=f'{self}._execute_sync_or_async_handler({event}, {get_handler_name(handler)})',
                 )
                 handler_tasks[handler_id] = (task, handler)
 
@@ -702,7 +705,9 @@ class EventBus:
                 f'{get_handler_name(handler)}({event})'
             )
 
-        monitor_task = asyncio.create_task(deadlock_monitor(), name=f'{self}.deadlock_monitor({event}, {get_handler_name(handler)}#{handler_id[-4:]})')
+        monitor_task = asyncio.create_task(
+            deadlock_monitor(), name=f'{self}.deadlock_monitor({event}, {get_handler_name(handler)}#{handler_id[-4:]})'
+        )
 
         try:
             if inspect.iscoroutinefunction(handler):
@@ -715,8 +720,10 @@ class EventBus:
                 result_value: Any = handler(event)
             else:
                 raise ValueError(f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}')
-            
-            logger.debug(f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__} {result_value}')
+
+            logger.debug(
+                f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__} {result_value}'
+            )
             # Cancel the monitor task since handler completed successfully
             monitor_task.cancel()
 
@@ -760,13 +767,17 @@ class EventBus:
     def _would_create_loop(self, event: BaseEvent, handler: EventHandler) -> bool:
         """Check if calling this handler would create a loop (i.e. re-process an event that has already been processed by this EventBus)"""
 
-        assert inspect.isfunction(handler) or inspect.iscoroutinefunction(handler) or inspect.ismethod(handler), f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}'
+        assert inspect.isfunction(handler) or inspect.iscoroutinefunction(handler) or inspect.ismethod(handler), (
+            f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}'
+        )
 
         # First check: If handler is another EventBus.dispatch method, check if we're forwarding to another bus that it's already been processed by
         if hasattr(handler, '__self__') and isinstance(handler.__self__, EventBus) and handler.__name__ == 'dispatch':  # pyright: ignore[reportFunctionMemberAccess]  # type: ignore
             target_bus = handler.__self__  # pyright: ignore[reportFunctionMemberAccess]  # type: ignore
             if target_bus.name in event.event_path:
-                logger.debug(f'⚠️ {self} handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) skipped to prevent infinite loop with {target_bus.name}')
+                logger.debug(
+                    f'⚠️ {self} handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) skipped to prevent infinite loop with {target_bus.name}'
+                )
                 return True
 
         # Second check: Check if there's already a completed result for this handler ID

@@ -156,10 +156,10 @@ class TestEventEnqueueing:
         """Test sync event emission"""
         bus = EventBus()
         event = SystemEventModel(event_name='startup', severity='info')
-        
+
         with pytest.raises(RuntimeError) as e:
             bus.dispatch(event)
-            
+
         assert 'no event loop is running' in str(e.value)
         assert len(bus.event_history) == 0
 

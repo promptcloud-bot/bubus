@@ -268,7 +268,9 @@ class TestParentEventTracking:
             child = ChildEvent(data='before_error')
             eventbus.dispatch(child)
             child_events.append(child)
-            raise ValueError('Handler error - expected to fail - testing that parent event tracking works even when handlers error')
+            raise ValueError(
+                'Handler error - expected to fail - testing that parent event tracking works even when handlers error'
+            )
 
         async def success_handler(event: BaseEvent) -> str:
             # This should still run

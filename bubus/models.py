@@ -59,16 +59,28 @@ class BaseEvent(BaseModel):
     The base model used for all Events that flow through the EventBus system.
     """
 
-    model_config = ConfigDict(extra='allow', arbitrary_types_allowed=True, validate_assignment=True, validate_default=True, revalidate_instances='always')
+    model_config = ConfigDict(
+        extra='allow',
+        arbitrary_types_allowed=True,
+        validate_assignment=True,
+        validate_default=True,
+        revalidate_instances='always',
+    )
 
     event_type: PythonIdentifierStr = Field(default='UndefinedEvent', description='Event type name', max_length=64)
-    event_schema: str = Field(default=f'UndefinedEvent@{LIBRARY_VERSION}', description='Event schema version in format ClassName@version', max_length=250)  # long because it can include long function names / module paths
+    event_schema: str = Field(
+        default=f'UndefinedEvent@{LIBRARY_VERSION}',
+        description='Event schema version in format ClassName@version',
+        max_length=250,
+    )  # long because it can include long function names / module paths
     event_timeout: float | None = Field(default=300.0, description='Timeout in seconds for event to finish processing')
 
     # Runtime metadata
     event_id: UUIDStr = Field(default_factory=uuid7str, max_length=36)
     event_path: list[PythonIdentifierStr] = Field(default_factory=list, description='Path tracking for event routing')
-    event_parent_id: UUIDStr | None = Field(default=None, description='ID of the parent event that triggered this event', max_length=36)
+    event_parent_id: UUIDStr | None = Field(
+        default=None, description='ID of the parent event that triggered this event', max_length=36
+    )
 
     # Completion tracking fields
     event_created_at: datetime = Field(
@@ -149,7 +161,7 @@ class BaseEvent(BaseModel):
             except RuntimeError:
                 pass  # Keep it None if no event loop
         return self._event_completed_signal
-    
+
     @property
     def event_status(self) -> str:
         return 'completed' if self.event_completed_at else 'started' if self.event_started_at else 'pending'
@@ -224,7 +236,9 @@ class BaseEvent(BaseModel):
                 # handlers on other busses will automatically insert their own results into the event_results dict
                 continue
             if not isinstance(event_result.result, dict):  # omit if result is not a dict
-                logger.warning(f"⚠️ {self}.event_results_flat_dict() expects all handlers to return a dict, but handler {event_result.handler_name}() returned a {type(event_result.result).__name__}: {repr(event_result.result)[:12]}...")
+                logger.warning(
+                    f'⚠️ {self}.event_results_flat_dict() expects all handlers to return a dict, but handler {event_result.handler_name}() returned a {type(event_result.result).__name__}: {repr(event_result.result)[:12]}...'
+                )
                 continue
             merged_results.update(
                 event_result.result  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
@@ -246,7 +260,9 @@ class BaseEvent(BaseModel):
                 # handlers on other busses will automatically insert their own results into the event_results dict
                 continue
             if not isinstance(event_result.result, list):  # omit if result is not a list
-                logger.warning(f"⚠️ {self}.event_results_flat_list() expects all handlers to return a list, but handler {event_result.handler_name}() returned a {type(event_result.result).__name__}: {repr(event_result.result)[:12]}...")
+                logger.warning(
+                    f'⚠️ {self}.event_results_flat_list() expects all handlers to return a list, but handler {event_result.handler_name}() returned a {type(event_result.result).__name__}: {repr(event_result.result)[:12]}...'
+                )
                 continue
             merged_results.extend(
                 event_result.result  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
@@ -259,6 +275,7 @@ class BaseEvent(BaseModel):
         """Create or update an EventResult for a handler"""
 
         from bubus.service import EventBus
+
         assert eventbus is None or isinstance(eventbus, EventBus)
         if eventbus is None and handler and inspect.ismethod(handler) and isinstance(handler.__self__, EventBus):
             eventbus = handler.__self__
@@ -303,7 +320,7 @@ class BaseEvent(BaseModel):
             if all_done:
                 self._event_processed_at = datetime.now(UTC)
                 self.event_completed_signal.set()
-    
+
     def _log_safe_summary(self) -> dict[str, Any]:
         """only event metadata without contents, avoid potentially sensitive event contents in logs"""
         return {k: v for k, v in self.model_dump(mode='json').items() if k.startswith('event_') and 'results' not in k}
@@ -329,12 +346,18 @@ assert not illegal_attrs, (
 class EventResult(BaseModel):
     """Individual result from a single handler"""
 
-    model_config = ConfigDict(extra='forbid', arbitrary_types_allowed=True, validate_assignment=True, validate_default=True, revalidate_instances='always')
+    model_config = ConfigDict(
+        extra='forbid',
+        arbitrary_types_allowed=True,
+        validate_assignment=True,
+        validate_default=True,
+        revalidate_instances='always',
+    )
 
     # Result fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
     result: Any = None
     error: BaseException | None = None
-    
+
     # Automatically set fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
     id: UUIDStr = Field(default_factory=uuid7str)
 
@@ -399,7 +422,9 @@ class EventResult(BaseModel):
             self.result = kwargs['result']
             self.status = 'completed'
         elif 'error' in kwargs:
-            assert isinstance(kwargs['error'], (BaseException, str)), f'Invalid error type: {type(kwargs["error"]).__name__} {kwargs["error"]}'
+            assert isinstance(kwargs['error'], (BaseException, str)), (
+                f'Invalid error type: {type(kwargs["error"]).__name__} {kwargs["error"]}'
+            )
             self.error = kwargs['error'] if isinstance(kwargs['error'], BaseException) else Exception(kwargs['error'])
             self.status = 'error'
         elif 'status' in kwargs:
