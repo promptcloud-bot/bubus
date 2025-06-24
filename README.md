@@ -248,7 +248,8 @@ async def parent_handler(event: BaseEvent):
     assert child_event_sync.event_parent_id == event.event_id
 
 parent_event = bus.dispatch(ParentEvent())
-assert all(event.event_parent_id == parent_event.event_id for event in list(bus.event_history.values())[1:])
+print(parent_event.event_children)           # show all the child events emitted during handling of an event
+print(bus._log_tree())                       # print a nice pretty tree view of the entire event hierarchy
 ```
 
 <br/>
