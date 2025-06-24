@@ -228,7 +228,7 @@ response_event = await bus.expect('ResponseEvent', timeout=30)
 
 # Block until a specific event is seen (with optional predicate filtering)
 response_event = await bus.expect(
-    'ResponseEvent',
+    ResponseEvent,  # can pass event type as a string or class
     predicate=lambda e: e.request_id == my_request_id,
     timeout=30
 )
