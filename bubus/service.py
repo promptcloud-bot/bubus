@@ -118,11 +118,6 @@ _current_event_context: ContextVar[BaseEvent | None] = ContextVar('current_event
 _inside_handler_context: ContextVar[bool] = ContextVar('inside_handler', default=False)
 # Context variable to track if we hold the global lock (for re-entrancy across tasks)
 _holds_global_lock: ContextVar[bool] = ContextVar('holds_global_lock', default=False)
-# Context variable to track the current handler ID (for tracking child events)
-_current_handler_id_context: ContextVar[str | None] = ContextVar('current_handler_id', default=None)
-
-# Global semaphore shared by all EventBus instances for serialized processing
-_global_eventbus_semaphore: asyncio.Semaphore | None = None
 
 class ReentrantLock:
     """A re-entrant lock that works across different asyncio tasks using ContextVar."""
@@ -350,15 +345,6 @@ class EventBus:
             if current_event is not None:
                 event.event_parent_id = current_event.event_id
         
-        # Track child events - if we're inside a handler, add this event to the handler's event_children list
-        # Only track if this is a NEW event (not forwarding an existing event)
-        current_handler_id = _current_handler_id_context.get()
-        if current_handler_id is not None and _inside_handler_context.get():
-            current_event = _current_event_context.get()
-            if current_event is not None and current_handler_id in current_event.event_results:
-                # Only add as child if it's a different event (not forwarding the same event)
-                if event.event_id != current_event.event_id:
-                    current_event.event_results[current_handler_id].event_children.append(event)
 
         # Add this EventBus to the event_path if not already there
         if self.name not in event.event_path:
@@ -378,9 +364,6 @@ class EventBus:
         # Add event to history
         self.event_history[event.event_id] = event
         # logger.debug(f'📝 {self}.dispatch() adding event {event.event_id} to history')
-        
-        # Store weak reference to EventBus for nested event handling
-        event._event_dispatched_by_eventbus = weakref.ref(self)
 
         # Auto-start if needed
         self._start()
@@ -561,13 +544,6 @@ class EventBus:
         self._runloop_task = None
         if self._on_idle:
             self._on_idle.set()
-        
-        # Clear circular references from events to allow garbage collection
-        # This only clears the weak references back to this EventBus instance
-        for event_id in self.event_history:
-            event = self.event_history[event_id]
-            if hasattr(event, '_event_dispatched_by_eventbus'):
-                event._event_dispatched_by_eventbus = None
 
         logger.debug(f'🛑 {self} shut down gracefully' if timeout is not None else f'🛑 {self} killed')
 
@@ -791,8 +767,6 @@ class EventBus:
         token = _current_event_context.set(event)
         # Mark that we're inside a handler
         handler_token = _inside_handler_context.set(True)
-        # Set the current handler ID so child events can be tracked
-        handler_id_token = _current_handler_id_context.set(handler_id)
 
         # Create a task to monitor for potential deadlock / slow handlers
         async def deadlock_monitor():
@@ -859,7 +833,6 @@ class EventBus:
             # Reset context
             _current_event_context.reset(token)
             _inside_handler_context.reset(handler_token)
-            _current_handler_id_context.reset(handler_id_token)
             # Ensure monitor task is cancelled
             try:
                 if not monitor_task.done():

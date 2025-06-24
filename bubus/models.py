@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import logging
 import os
-import weakref
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Coroutine, Literal, Self, TypeAlias
@@ -96,8 +95,6 @@ class BaseEvent(BaseModel):
     # Completion signal
     _event_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
     _event_processed_at: datetime | None = PrivateAttr(default=None)
-    _event_dispatched_by_eventbus: Any = PrivateAttr(default=None)  # WeakRef to EventBus for nested handling
-
     def __hash__(self) -> int:
         """Make events hashable using their unique event_id"""
         return hash(self.event_id)
@@ -395,87 +392,10 @@ class BaseEvent(BaseModel):
         """only event metadata without contents, avoid potentially sensitive event contents in logs"""
         return {k: v for k, v in self.model_dump(mode='json').items() if k.startswith('event_') and 'results' not in k}
     
-    def eventbus_dispatch(self) -> Self:
-        """
-        Dispatch this event to the EventBus that originally dispatched it.
-        This is a helper shortcut for eventbus.dispatch(event), avoid using it outside of tests and examples.
-        It's better to explicitly call eventbus.dispatch(event) on the EventBus instance you want to dispatch to,
-        rather than relying on this circular reference shortcut.
-        """
-        
-        # check circular reference to the EventBus that dispatched this event
-        if self._event_dispatched_by_eventbus is None:
-            raise RuntimeError(f"Cannot dispatch {self} - this event is not attached to any EventBus yet. Event must be dispatched by an EventBus first to use the shortcut event.eventbus_dispatch() to dispatch subsequent events")
-        
-        # Get the EventBus from weak reference
-        eventbus = self._event_dispatched_by_eventbus()
-        if eventbus is None:
-            raise RuntimeError(f"Cannot dispatch {self} - EventBus reference is no longer valid (was garbage collected). Keep a reference to the EventBus and call eventbus.dispatch(event) and avoid relying on the event to know what EventBus it should dispatch to.")
-        
-        # Dispatch self to the bus
-        return eventbus.dispatch(self)
-    
     def _log_tree(self, indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None) -> None:
         """Print this event and its results with proper tree formatting"""
-        from datetime import datetime
-        
-        def format_timestamp(dt: datetime | None) -> str:
-            """Format a datetime for display"""
-            if dt is None:
-                return "N/A"
-            return dt.strftime("%H:%M:%S.%f")[:-3]  # Show time with milliseconds
-        
-        # Determine the connector
-        connector = "└── " if is_last else "├── "
-        
-        # Print this event's line
-        status_icon = "✅" if self.event_status == "completed" else "🏃" if self.event_status == "started" else "⏳"
-        
-        # Format timing info
-        timing_str = f"[{format_timestamp(self.event_created_at)}"
-        if self.event_completed_at and self.event_created_at:
-            duration = (self.event_completed_at - self.event_created_at).total_seconds()
-            timing_str += f" ({duration:.3f}s)"
-        timing_str += "]"
-        
-        print(f"{indent}{connector}{status_icon} {self.event_type}#{self.event_id[-4:]} {timing_str}")
-        
-        # Calculate the new indent for children
-        extension = "    " if is_last else "│   "
-        new_indent = indent + extension
-        
-        # Track which child events were printed via handlers to avoid duplicates
-        printed_child_ids = set()
-        
-        # Print each result
-        if self.event_results:
-            results_sorted = sorted(self.event_results.items(), key=lambda x: x[1].started_at or datetime.min.replace(tzinfo=UTC))
-            
-            # Calculate which is the last item considering both results and unmapped children
-            unmapped_children = []
-            if child_events_by_parent:
-                all_children = child_events_by_parent.get(self.event_id, [])
-                for child in all_children:
-                    # Will be printed later if not already printed by a handler
-                    if child.event_id not in [c.event_id for r in self.event_results.values() for c in r.event_children]:
-                        unmapped_children.append(child)
-            
-            total_items = len(results_sorted) + len(unmapped_children)
-            
-            for i, (handler_id, result) in enumerate(results_sorted):
-                is_last_item = (i == total_items - 1)
-                result._log_tree(new_indent, is_last_item, child_events_by_parent)
-                # Track child events printed by this result
-                for child in result.event_children:
-                    printed_child_ids.add(child.event_id)
-        
-        # Print unmapped children (those not printed by any handler)
-        if child_events_by_parent:
-            children = child_events_by_parent.get(self.event_id, [])
-            for i, child in enumerate(children):
-                if child.event_id not in printed_child_ids:
-                    is_last_child = (i == len(children) - 1)
-                    child._log_tree(new_indent, is_last_child, child_events_by_parent)
+        from bubus.log_helpers import log_event_tree
+        log_event_tree(self, indent, is_last, child_events_by_parent)
 
 
 def attr_name_allowed(key: str):
@@ -486,7 +406,7 @@ def attr_name_allowed(key: str):
 # This is the same approach Pydantic uses for their special `model_*` attrs (and BaseEvent is also a pydantic model, so model_ prefixes are reserved too)
 # resist the urge to nest the event data in an inner object unless absolutely necessary, flat simplifies most of the code and makes it easier to read JSON logs with less nesting
 pydantic_builtin_attrs = dir(BaseModel)
-event_builtin_attrs = {key for key in dir(BaseEvent) if key.startswith('event_') or key.startswith('eventbus_')}
+event_builtin_attrs = {key for key in dir(BaseEvent) if key.startswith('event_')}
 illegal_attrs = {key for key in dir(BaseEvent) if not attr_name_allowed(key)}
 assert not illegal_attrs, (
     'All BaseEvent attrs and methods must be prefixed with "event_" in order to avoid clashing '
@@ -594,65 +514,8 @@ class EventResult(BaseModel):
     
     def _log_tree(self, indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent]] | None = None) -> None:
         """Print this result and its child events with proper tree formatting"""
-        from datetime import datetime
-        
-        def format_timestamp(dt: datetime | None) -> str:
-            """Format a datetime for display"""
-            if dt is None:
-                return "N/A"
-            return dt.strftime("%H:%M:%S.%f")[:-3]  # Show time with milliseconds
-        
-        def format_result_value(value: Any) -> str:
-            """Format a result value for display"""
-            if value is None:
-                return "None"
-            if isinstance(value, BaseEvent):
-                return f"Event({value.event_type}#{value.event_id[-4:]})"
-            if isinstance(value, (str, int, float, bool)):
-                return repr(value)
-            if isinstance(value, dict):
-                return f"dict({len(value)} items)"
-            if isinstance(value, list):
-                return f"list({len(value)} items)"
-            return f"{type(value).__name__}(...)"
-        
-        # Determine the connector
-        connector = "└── " if is_last else "├── "
-        
-        # Status icon
-        result_icon = "✅" if self.status == "completed" else "❌" if self.status == "error" else "🏃" if self.status == "started" else "⏳"
-        
-        # Format handler name with bus info
-        handler_display = f"{self.eventbus_name}.{self.handler_name}#{self.handler_id[-4:]}"
-        
-        # Format the result line
-        result_line = f"{indent}{connector}{result_icon} {handler_display}"
-        
-        # Add timing info
-        if self.started_at:
-            result_line += f" [{format_timestamp(self.started_at)}"
-            if self.completed_at:
-                duration = (self.completed_at - self.started_at).total_seconds()
-                result_line += f" ({duration:.3f}s)"
-            result_line += "]"
-        
-        # Add result value or error
-        if self.status == "error" and self.error:
-            result_line += f" ❌ {type(self.error).__name__}: {str(self.error)}"
-        elif self.status == "completed":
-            result_line += f" → {format_result_value(self.result)}"
-        
-        print(result_line)
-        
-        # Calculate the new indent for child events
-        extension = "    " if is_last else "│   "
-        new_indent = indent + extension
-        
-        # Print child events dispatched by this handler
-        if self.event_children:
-            for i, child in enumerate(self.event_children):
-                is_last_child = (i == len(self.event_children) - 1)
-                child._log_tree(new_indent, is_last_child, child_events_by_parent)
+        from bubus.log_helpers import log_result_tree
+        log_result_tree(self, indent, is_last, child_events_by_parent)
 
 
 # Resolve forward references
