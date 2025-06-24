@@ -223,8 +223,8 @@ async def parent_handler(event: BaseEvent):
     assert child_event_sync.event_status == 'completed'
 
     # in all cases, parent-child relationships are automagically tracked
-    assert child_event_async.event_parent_id == parent_event.event_id
-    assert child_event_sync.event_parent_id == parent_event.event_id
+    assert child_event_async.event_parent_id == event.event_id
+    assert child_event_sync.event_parent_id == event.event_id
 
 bus.dispatch(ParentEvent())
 ```
