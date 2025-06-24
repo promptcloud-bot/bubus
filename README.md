@@ -207,10 +207,8 @@ response_event = await bus.expect(
 )
 ```
 
-:::
-[!IMPORTANT]
-`expect()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. `await response_event` to get the completed event.
-```
+> [!IMPORTANT]
+> `expect()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. `await response_event` to get the completed event.
 
 ### Write-Ahead Logging
 
