@@ -218,6 +218,7 @@ async def parent_handler(event: BaseEvent):
 
     # or you can dispatch an event and block until it finishes processing by awaiting the event
     # (recursively waits for all handlers, including if event is forwarded to other busses)
+    # (note: awaiting an event from inside a handler jumps the FIFO queue and will process it before other pending events in the bus's queue)
     child_event_sync = await bus.dispatch(ChildEvent())
     # ChildEvent handlers run immediately
     assert child_event_sync.event_status == 'completed'
