@@ -94,9 +94,10 @@ bus.on(UserActionEvent, handler)
 bus.on('*', universal_handler)
 ```
 
-### Hierarchical Event Bus Networks
+### Forward `Events` Between `EventBus`s 
 
-Create networks of event buses that forward events between each other (with automatic loop prevention):
+You can define separate `EventBus` instances in different "microservices" to separate different areas of concern.
+`EventBus`s can be set up to forward events between each other (with automatic loop prevention):
 
 ```python
 # Create a hierarchy of buses
@@ -105,7 +106,7 @@ auth_bus = EventBus(name='AuthBus')
 data_bus = EventBus(name='DataBus')
 
 # Forward events between buses (infinite loops are automatically prevented)
-main_bus.on('*', auth_bus.dispatch)
+main_bus.on('AuthEvent', auth_bus.dispatch)
 auth_bus.on('*', data_bus.dispatch)
 
 # Events flow through the hierarchy with tracking
