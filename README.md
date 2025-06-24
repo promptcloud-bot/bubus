@@ -212,13 +212,9 @@ async def parent_handler(event: BaseEvent):
     assert child_event_async.status != 'completed'
     # ChildEvent handlers will run after parent_handler exits
 
-    # you can also use expect to await asynchronously dispatched nested event completion
-    # (note: awaiting an event from inside a handler jumps the FIFO queue and will process it before other pending events in the bus's queue)
-    await bus.expect(ChildEvent)
-    assert child_event_async.event_status == 'completed'
-
     # or you can dispatch an event and block until it finishes processing by awaiting the event
-    # (recursively waits for all handlers, including if event is forwarded to other busses)
+    # this recursively waits for all handlers, including if event is forwarded to other busses
+    # (note: awaiting an event from inside a handler jumps the FIFO queue and will process it before other pending events in the bus's queue)
     child_event_sync = await bus.dispatch(ChildEvent())
     # ChildEvent handlers run immediately
     assert child_event_sync.event_status == 'completed'
