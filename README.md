@@ -211,12 +211,15 @@ async def parent_handler(event: BaseEvent):
     child_event_async = bus.dispatch(ChildEvent())
     # ChildEvent handlers will run after parent_handler exits
 
-    # or they can dispatch events and block until they finish processing
+    # you can also use expect to await asynchronously dispatched nested event completion
+    await bus.expect(ChildEvent)
+
+    # or you can dispatch an event and block until it finishes processing by awaiting the event
     # (recursively waits for all handlers, including if event is forwarded to other busses)
     child_event_sync = await bus.dispatch(ChildEvent())
     # ChildEvent handlers run immediately
 
-    # in both cases, parent-child relationships are automagically tracked
+    # in all cases, parent-child relationships are automagically tracked
     assert child_event_async.event_parent_id == parent_event.event_id
     assert child_event_sync.event_parent_id == parent_event.event_id
 
