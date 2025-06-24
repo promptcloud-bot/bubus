@@ -384,6 +384,7 @@ class BaseEvent(BaseModel):
 - `event_status`: `Literal['pending', 'started', 'complete']` Event status
 - `event_started_at`: `datetime` When first handler started processing
 - `event_completed_at`: `datetime` When all handlers completed processing
+- `event_children`: `list[BaseEvent]` Get any child events emitted during handling of this event
 
 #### `BaseEvent` Methods
 
@@ -470,6 +471,7 @@ class EventResult(BaseModel):
     started_at: datetime      # When handler started
     completed_at: datetime    # When handler completed
     timeout: float            # Handler timeout in seconds
+    child_events: list[BaseEvent] # list of child events emitted during handler execution
 ```
 
 #### `EventResult` Methods
