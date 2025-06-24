@@ -207,14 +207,20 @@ Automatically track event relationships and causality tree:
 
 ```python
 async def parent_handler(event: BaseEvent):
-    # handlers can emit events during processing
-    child_event = bus.dispatch(ChildEvent())
+    # handlers can emit more events to be processed asynchronously after this handler completes
+    child_event_async = bus.dispatch(ChildEvent())
+    # ChildEvent handlers will run after parent_handler exits
 
-parent_event = bus.dispatch(ParentEvent())
-child_event = await bus.expect(ChildEvent)
+    # or they can dispatch events and block until they finish processing
+    # (recursively waits for all handlers, including if event is forwarded to other busses)
+    child_event_sync = await bus.dispatch(ChildEvent())
+    # ChildEvent handlers run immediately
 
-# parent-child relationships are automagically tracked
-assert child_event.event_parent_id == parent_event.event_id
+    # in both cases, parent-child relationships are automagically tracked
+    assert child_event_async.event_parent_id == parent_event.event_id
+    assert child_event_sync.event_parent_id == parent_event.event_id
+
+bus.dispatch(ParentEvent())
 ```
 
 <br/>
