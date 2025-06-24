@@ -151,6 +151,26 @@ for i in range(10):
 await bus.wait_until_idle()
 ```
 
+If a handler dispatches and awaits any child events during exeuction, those events will jump the FIFO queue and be processed immediately:
+```python
+def child_handler(event: SomeOtherEvent):
+    return 'xzy123'
+
+def main_handler(event: MainEvent):
+    # enqueue event for processing after main_handler exits
+    child_event = bus.dispatch(SomeOtherEvent())
+    
+    # can also await child events to process immediately instead of adding to FIFO queue
+    completed_child_event = await child_event
+    return f'result from awaiting child event: {await completed_child_event.event_result()}'  # 'xyz123'
+
+bus.on(SomeOtherEvent, child_handler)
+bus.on(MainEvent, main_handler)
+
+await bus.dispatch(MainEvent()).event_result()
+# result from awaiting child event: xyz123
+```
+
 ### Parallel Handler Execution
 
 Enable parallel processing of handlers for better performance.  
