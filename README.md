@@ -220,13 +220,13 @@ print(bus._log_tree())                       # print a nice pretty tree view of 
 <img width="1145" alt="image" src="https://github.com/user-attachments/assets/f94684a6-7694-4066-b948-46925f47b56c" />
 
 
-### Event Expectation (Async Waiting)
+### Expect an Event to be Dispatched
 
 Wait for specific events to be seen on a bus with optional filtering:
 
 ```python
 # Block until a specific event is seen (with optional timeout)
-request = await bus.dispatch(RequestEvent(...))
+request_event = await bus.dispatch(RequestEvent(...))
 response_event = await bus.expect('ResponseEvent', timeout=30)
 
 # Block until a specific event is seen (with optional predicate filtering)
