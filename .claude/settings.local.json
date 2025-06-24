@@ -5,7 +5,9 @@
       "Bash(python -m pytest tests/test_eventbus.py::TestEventTypeOverride::test_automatic_event_type_derivation -xvs)",
       "Bash(python -m pytest tests/test_eventbus.py -x)",
       "Bash(pytest:*)",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "Bash(python -m pytest tests/test_event_children.py -xvs)",
+      "Bash(uv run pytest:*)"
     ],
     "deny": []
   }
