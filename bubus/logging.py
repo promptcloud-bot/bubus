@@ -1,9 +1,11 @@
 """Helper functions for logging event trees and formatting"""
+from collections import defaultdict
 from datetime import datetime, UTC
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bubus.models import BaseEvent, EventResult
+    from bubus.service import EventBus
 
 
 def format_timestamp(dt: datetime | None) -> str:
@@ -28,7 +30,7 @@ def format_result_value(value: Any) -> str:
     return f"{type(value).__name__}(...)"
 
 
-def log_event_tree(event: 'BaseEvent', indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None) -> None:
+def _log_event_tree(event: 'BaseEvent', indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None) -> None:
     """Print this event and its results with proper tree formatting"""
     # Determine the connector
     connector = "└── " if is_last else "├── "
@@ -69,7 +71,7 @@ def log_event_tree(event: 'BaseEvent', indent: str = "", is_last: bool = True, c
         
         for i, (handler_id, result) in enumerate(results_sorted):
             is_last_item = (i == total_items - 1)
-            log_result_tree(result, new_indent, is_last_item, child_events_by_parent)
+            _log_eventresult_tree(result, new_indent, is_last_item, child_events_by_parent)
             # Track child events printed by this result
             for child in result.event_children:
                 printed_child_ids.add(child.event_id)
@@ -80,10 +82,10 @@ def log_event_tree(event: 'BaseEvent', indent: str = "", is_last: bool = True, c
         for i, child in enumerate(children):
             if child.event_id not in printed_child_ids:
                 is_last_child = (i == len(children) - 1)
-                log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
+                _log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
 
 
-def log_result_tree(result: 'EventResult', indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None) -> None:
+def _log_eventresult_tree(result: 'EventResult', indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None) -> None:
     """Print this result and its child events with proper tree formatting"""
     # Determine the connector
     connector = "└── " if is_last else "├── "
@@ -121,4 +123,42 @@ def log_result_tree(result: 'EventResult', indent: str = "", is_last: bool = Tru
     if result.event_children:
         for i, child in enumerate(result.event_children):
             is_last_child = (i == len(result.event_children) - 1)
-            log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
+            _log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
+
+
+def _log_eventbus_tree(eventbus: 'EventBus') -> None:
+    """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
+    
+    # Build a mapping of parent_id to child events
+    parent_to_children: dict[str | None, list['BaseEvent']] = defaultdict(list)
+    for event in eventbus.event_history.values():
+        parent_to_children[event.event_parent_id].append(event)
+    
+    # Sort events by creation time
+    for children in parent_to_children.values():
+        children.sort(key=lambda e: e.event_created_at)
+    
+    # Find root events (those without parents or with self as parent)
+    root_events = list(parent_to_children[None])
+    
+    # Also include events that have themselves as parent (edge case)
+    for event in eventbus.event_history.values():
+        if event.event_parent_id == event.event_id and event not in root_events:
+            root_events.append(event)
+            # Remove from its incorrect parent mapping to avoid double printing
+            if event.event_id in parent_to_children:
+                parent_to_children[event.event_id] = [e for e in parent_to_children[event.event_id] if e.event_id != event.event_id]
+    
+    print(f"\n📊 Event History Tree for {eventbus}")
+    print("=" * 80)
+    
+    if not root_events:
+        print("  (No events in history)")
+        return
+    
+    # Print all root events using their _log_tree helper method
+    for i, event in enumerate(root_events):
+        is_last = (i == len(root_events) - 1)
+        _log_event_tree(event, "", is_last, parent_to_children)
+    
+    print("=" * 80)

@@ -1,4 +1,4 @@
-"""Test the EventBus._log_history_tree() method"""
+"""Test the EventBus._log_tree() method"""
 import asyncio
 from datetime import datetime, UTC
 from io import StringIO
@@ -26,7 +26,7 @@ class GrandchildEvent(BaseEvent):
 def test_log_history_tree_empty(capsys):
     """Test tree output with empty history"""
     bus = EventBus(name="EmptyBus")
-    bus._log_history_tree()
+    bus._log_tree()
     
     captured = capsys.readouterr()
     assert "Event History Tree for EmptyBus" in captured.out
@@ -42,7 +42,7 @@ def test_log_history_tree_single_event(capsys):
     event._event_processed_at = datetime.now(UTC)
     bus.event_history[event.event_id] = event
     
-    bus._log_history_tree()
+    bus._log_tree()
     
     captured = capsys.readouterr()
     assert "└── ✅ RootEvent#" in captured.out
@@ -73,7 +73,7 @@ def test_log_history_tree_with_handlers(capsys):
     )
     
     bus.event_history[event.event_id] = event
-    bus._log_history_tree()
+    bus._log_tree()
     
     captured = capsys.readouterr()
     assert "└── ✅ RootEvent#" in captured.out
@@ -103,7 +103,7 @@ def test_log_history_tree_with_errors(capsys):
     )
     
     bus.event_history[event.event_id] = event
-    bus._log_history_tree()
+    bus._log_tree()
     
     captured = capsys.readouterr()
     assert "❌ ErrorBus.error_handler#" in captured.out
@@ -186,7 +186,7 @@ def test_log_history_tree_complex_nested():
     sys.stdout = captured_output
     
     try:
-        bus._log_history_tree()
+        bus._log_tree()
         output = captured_output.getvalue()
     finally:
         sys.stdout = sys.__stdout__
@@ -219,7 +219,7 @@ def test_log_history_tree_multiple_roots(capsys):
     bus.event_history[root1.event_id] = root1
     bus.event_history[root2.event_id] = root2
     
-    bus._log_history_tree()
+    bus._log_tree()
     
     captured = capsys.readouterr()
     # Both roots should be shown
@@ -252,7 +252,7 @@ def test_log_history_tree_timing_info(capsys):
     )
     
     bus.event_history[event.event_id] = event
-    bus._log_history_tree()
+    bus._log_tree()
     
     captured = capsys.readouterr()
     # Should show timing with duration
@@ -280,7 +280,7 @@ def test_log_history_tree_running_handler(capsys):
     )
     
     bus.event_history[event.event_id] = event
-    bus._log_history_tree()
+    bus._log_tree()
     
     captured = capsys.readouterr()
     assert "🏃 RunningBus.running_handler#" in captured.out

@@ -956,39 +956,7 @@ class EventBus:
         except Exception as e:
             logger.error(f'❌ {self} Failed to save event {event.event_id} to WAL file: {type(e).__name__} {e}\n{event}')
     
-    def _log_history_tree(self) -> None:
+    def _log_tree(self) -> None:
         """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
-        
-        # Build a mapping of parent_id to child events
-        parent_to_children: dict[str | None, list[BaseEvent]] = defaultdict(list)
-        for event in self.event_history.values():
-            parent_to_children[event.event_parent_id].append(event)
-        
-        # Sort events by creation time
-        for children in parent_to_children.values():
-            children.sort(key=lambda e: e.event_created_at)
-        
-        # Find root events (those without parents or with self as parent)
-        root_events = list(parent_to_children[None])
-        
-        # Also include events that have themselves as parent (edge case)
-        for event in self.event_history.values():
-            if event.event_parent_id == event.event_id and event not in root_events:
-                root_events.append(event)
-                # Remove from its incorrect parent mapping to avoid double printing
-                if event.event_id in parent_to_children:
-                    parent_to_children[event.event_id] = [e for e in parent_to_children[event.event_id] if e.event_id != event.event_id]
-        
-        print(f"\n📊 Event History Tree for {self}")
-        print("=" * 80)
-        
-        if not root_events:
-            print("  (No events in history)")
-            return
-        
-        # Print all root events using their _log_tree helper method
-        for i, event in enumerate(root_events):
-            is_last = (i == len(root_events) - 1)
-            event._log_tree("", is_last, parent_to_children)
-        
-        print("=" * 80)
+        from bubus.logging import _log_eventbus_tree
+        _log_eventbus_tree(self)

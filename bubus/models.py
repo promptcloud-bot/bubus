@@ -394,8 +394,8 @@ class BaseEvent(BaseModel):
     
     def _log_tree(self, indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None) -> None:
         """Print this event and its results with proper tree formatting"""
-        from bubus.log_helpers import log_event_tree
-        log_event_tree(self, indent, is_last, child_events_by_parent)
+        from bubus.logging import _log_event_tree
+        _log_event_tree(self, indent, is_last, child_events_by_parent)
 
 
 def attr_name_allowed(key: str):
@@ -514,8 +514,8 @@ class EventResult(BaseModel):
     
     def _log_tree(self, indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent]] | None = None) -> None:
         """Print this result and its child events with proper tree formatting"""
-        from bubus.log_helpers import log_result_tree
-        log_result_tree(self, indent, is_last, child_events_by_parent)
+        from bubus.logging import _log_eventresult_tree
+        _log_eventresult_tree(self, indent, is_last, child_events_by_parent)
 
 
 # Resolve forward references
