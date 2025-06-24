@@ -217,6 +217,9 @@ print(parent_event.event_children)           # show all the child events emitted
 print(bus._log_tree())                       # print a nice pretty tree view of the entire event hierarchy
 ```
 
+<img width="1145" alt="image" src="https://github.com/user-attachments/assets/f94684a6-7694-4066-b948-46925f47b56c" />
+
+
 ### Event Expectation (Async Waiting)
 
 Wait for specific events to be seen on a bus with optional filtering:
