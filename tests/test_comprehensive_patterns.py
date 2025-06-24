@@ -148,8 +148,9 @@ async def test_comprehensive_patterns():
         if event.event_parent_id is None:
             print(f"  - {event}")
     
-    bus1._log_history_tree()
-    bus2._log_history_tree()
+    from bubus.logging import _log_eventbus_tree
+    _log_eventbus_tree(bus1)
+    _log_eventbus_tree(bus2)
     
     await bus1.stop()
     await bus2.stop()
@@ -213,8 +214,9 @@ async def test_race_condition_stress():
     
     # Print event history tree for the last run
     print("\nEvent history for the last test run:")
-    bus1._log_history_tree()
-    bus2._log_history_tree()
+    from bubus.logging import _log_eventbus_tree
+    _log_eventbus_tree(bus1)
+    _log_eventbus_tree(bus2)
     
     await bus1.stop()
     await bus2.stop()
