@@ -191,19 +191,24 @@ await bus.dispatch(DataEvent())
 
 ### Event Expectation (Async Waiting)
 
-Wait for specific events with optional filtering:
+Wait for specific events to be seen on a bus with optional filtering:
 
 ```python
 # Block until a specific event is seen (with optional timeout)
 request = await bus.dispatch(RequestEvent(...))
-response = await bus.expect('ResponseEvent', timeout=30)
+response_event = await bus.expect('ResponseEvent', timeout=30)
 
 # Block until a specific event is seen (with optional predicate filtering)
-response = await bus.expect(
+response_event = await bus.expect(
     'ResponseEvent',
     predicate=lambda e: e.request_id == my_request_id,
     timeout=30
 )
+```
+
+:::
+[!IMPORTANT]
+`expect()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. `await response_event` to get the completed event.
 ```
 
 ### Write-Ahead Logging
