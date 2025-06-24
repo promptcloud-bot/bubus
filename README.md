@@ -201,7 +201,7 @@ bus.dispatch(ImportantEvent(data="critical"))
 # {"event_type": "ImportantEvent", "data": "critical", ...}
 ```
 
-### Event Context and Parent Tracking
+### Nested Event Emitting From Handlers
 
 Automatically track event relationships and causality tree:
 
