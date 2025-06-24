@@ -46,8 +46,8 @@ def test_log_history_tree_single_event(capsys):
     
     captured = capsys.readouterr()
     assert "└── ✅ RootEvent#" in captured.out
-    # Should show timestamps since _event_processed_at is set
-    assert " → " in captured.out  # Arrow between timestamps
+    # Should show start time and duration
+    assert "[" in captured.out and "]" in captured.out
 
 
 def test_log_history_tree_with_handlers(capsys):
@@ -256,8 +256,8 @@ def test_log_history_tree_timing_info(capsys):
     
     captured = capsys.readouterr()
     # Should show timing with duration
-    assert " → " in captured.out  # Arrow between start and end times
-    assert "s)]" in captured.out  # Duration in seconds
+    assert "(" in captured.out  # Opening parenthesis for duration
+    assert "s)" in captured.out  # Duration in seconds with closing parenthesis
 
 
 def test_log_history_tree_running_handler(capsys):

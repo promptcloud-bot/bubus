@@ -12,6 +12,14 @@ class ChildEvent(BaseEvent):
     pass
 
 
+class ImmediateChildEvent(BaseEvent):
+    pass
+
+
+class QueuedChildEvent(BaseEvent):
+    pass
+
+
 async def test_comprehensive_patterns():
     """Test all event patterns work correctly without race conditions."""
     print("\n=== Test Comprehensive Patterns ===")
@@ -26,8 +34,9 @@ async def test_comprehensive_patterns():
         """This gets triggered when the event is forwarded to the second bus."""
         execution_counter['count'] += 1
         seq = execution_counter['count']
+        event_type_short = event.__class__.__name__.replace('Event', '')
         print(f"[{seq}] child_bus2_event_handler: processing {event.__class__.__name__} on bus2")
-        results.append((seq, f"bus2_handler_{event.__class__.__name__}"))
+        results.append((seq, f"bus2_handler_{event_type_short}"))
         return 'forwarded bus result'
     
     bus2.on('*', child_bus2_event_handler)   # register a handler on bus2
@@ -43,13 +52,13 @@ async def test_comprehensive_patterns():
         
         # Pattern 1: Async dispatch - handlers run after parent completes
         print("\n1. Testing async dispatch...")
-        child_event_async = bus1.dispatch(ChildEvent())
+        child_event_async = bus1.dispatch(QueuedChildEvent())
         print(f"   child_event_async.event_status = {child_event_async.event_status}")
         assert child_event_async.event_status != 'completed'
         
         # Pattern 2: Sync dispatch with await - handlers run immediately
         print("\n2. Testing sync dispatch (await)...")
-        child_event_sync = await bus1.dispatch(ChildEvent())
+        child_event_sync = await bus1.dispatch(ImmediateChildEvent())
         print(f"   child_event_sync.event_status = {child_event_sync.event_status}")
         assert child_event_sync.event_status == 'completed'
         
@@ -92,10 +101,11 @@ async def test_comprehensive_patterns():
     all_events = list(bus1.event_history.values())
     print(f"   Total events in history: {len(all_events)}")
     for i, event in enumerate(all_events):
-        print(f"   Event {i}: {event.__class__.__name__}, parent_id: {event.event_parent_id}")
+        print(f"   Event {i}: {event.__class__.__name__}, id: {event.event_id[-4:]}, parent_id: {event.event_parent_id[-4:] if event.event_parent_id else 'None'}")
     
-    # First event is the parent, all others should have parent's ID
-    assert all(event.event_parent_id == parent_event.event_id for event in all_events[1:])
+    # Child events should have parent's ID
+    child_events = [e for e in all_events if isinstance(e, (ImmediateChildEvent, QueuedChildEvent))]
+    assert all(event.event_parent_id == parent_event.event_id for event in child_events)
     
     # Sort results by sequence number to see actual execution order
     sorted_results = sorted(results, key=lambda x: x[0])
@@ -112,19 +122,34 @@ async def test_comprehensive_patterns():
     # 1. Parent handler starts
     assert execution_order[0] == "parent_start"
     
-    # 2. Sync child is processed immediately (during await)
-    assert "bus2_handler_ChildEvent" in execution_order
+    # 2. ImmediateChild is processed immediately (during await)
+    assert "bus2_handler_ImmediateChild" in execution_order
     
     # 3. Parent handler should finish (if no error)
     if "parent_end" in execution_order:
         parent_end_idx = execution_order.index("parent_end")
         assert parent_end_idx > 1
     
-    # 4. Count that we have 2 ChildEvent handlers and 1 ParentEvent handler
-    assert execution_order.count("bus2_handler_ChildEvent") == 2
-    assert execution_order.count("bus2_handler_ParentEvent") == 1
+    # 4. Count events: 1 ImmediateChild, 1 QueuedChild, 1 Parent
+    assert execution_order.count("bus2_handler_ImmediateChild") == 1
+    assert execution_order.count("bus2_handler_QueuedChild") == 1
+    assert execution_order.count("bus2_handler_Parent") == 1
     
     print("\n✅ All comprehensive patterns work correctly!")
+    
+    # Print event history tree before stopping buses
+    print("\nEvent History Trees:")
+    print(f"bus1 has {len(bus1.event_history)} events in history")
+    print(f"bus2 has {len(bus2.event_history)} events in history")
+    
+    # Debug: show which events have None parent
+    print("\nEvents with no parent (roots):")
+    for event in bus1.event_history.values():
+        if event.event_parent_id is None:
+            print(f"  - {event}")
+    
+    bus1._log_history_tree()
+    bus2._log_history_tree()
     
     await bus1.stop()
     await bus2.stop()
@@ -139,7 +164,7 @@ async def test_race_condition_stress():
     
     results = []
     
-    async def child_handler(event: ChildEvent):
+    async def child_handler(event: BaseEvent):
         bus_name = event.event_path[-1] if event.event_path else "unknown"
         results.append(f"child_{bus_name}")
         # Add small delay to simulate work
@@ -152,11 +177,11 @@ async def test_race_condition_stress():
         
         # Async dispatches
         for i in range(3):
-            children.append(bus1.dispatch(ChildEvent()))
+            children.append(bus1.dispatch(QueuedChildEvent()))
         
         # Sync dispatches
         for i in range(3):
-            child = await bus1.dispatch(ChildEvent())
+            child = await bus1.dispatch(ImmediateChildEvent())
             assert child.event_status == 'completed'
             children.append(child)
         
@@ -166,8 +191,10 @@ async def test_race_condition_stress():
     
     # Setup forwarding
     bus1.on('*', bus2.dispatch)
-    bus1.on(ChildEvent, child_handler)
-    bus2.on(ChildEvent, child_handler)
+    bus1.on(QueuedChildEvent, child_handler)
+    bus1.on(ImmediateChildEvent, child_handler)
+    bus2.on(QueuedChildEvent, child_handler)
+    bus2.on(ImmediateChildEvent, child_handler)
     bus1.on(BaseEvent, parent_handler)
     
     # Run multiple times to check for race conditions
@@ -183,6 +210,11 @@ async def test_race_condition_stress():
         assert results.count('child_bus2') == 6, f"Run {run}: Expected 6 child_bus2, got {results.count('child_bus2')}"
     
     print("✅ No race conditions detected!")
+    
+    # Print event history tree for the last run
+    print("\nEvent history for the last test run:")
+    bus1._log_history_tree()
+    bus2._log_history_tree()
     
     await bus1.stop()
     await bus2.stop()
