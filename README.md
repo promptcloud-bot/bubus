@@ -209,15 +209,18 @@ Automatically track event relationships and causality tree:
 async def parent_handler(event: BaseEvent):
     # handlers can emit more events to be processed asynchronously after this handler completes
     child_event_async = bus.dispatch(ChildEvent())
+    assert child_event_async.status != 'completed'
     # ChildEvent handlers will run after parent_handler exits
 
     # you can also use expect to await asynchronously dispatched nested event completion
     await bus.expect(ChildEvent)
+    assert child_event_async.event_status == 'completed'
 
     # or you can dispatch an event and block until it finishes processing by awaiting the event
     # (recursively waits for all handlers, including if event is forwarded to other busses)
     child_event_sync = await bus.dispatch(ChildEvent())
     # ChildEvent handlers run immediately
+    assert child_event_sync.event_status == 'completed'
 
     # in all cases, parent-child relationships are automagically tracked
     assert child_event_async.event_parent_id == parent_event.event_id
