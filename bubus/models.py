@@ -110,7 +110,7 @@ class BaseEvent(BaseModel):
             if self.event_status == 'error'
             else '🏃'
         )
-        return f'{self.__class__.__name__}#{self.event_id[-4:]}{icon}{">".join(self.event_path[1:])})'
+        return f'{self.__class__.__name__}#{self.event_id[-4:]}{icon}{">".join(self.event_path[1:])}'
 
     def __await__(self) -> Generator[Self, Any, Any]:
         """Wait for event to complete and return self"""
