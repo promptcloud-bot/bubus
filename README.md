@@ -15,16 +15,22 @@ pip install bubus
 ```python
 import asyncio
 from bubus import EventBus, BaseEvent
+from your_auth_events import AuthRequestEvent, AuthResponseEvent
+
+bus = EventBus()
 
 class UserLoginEvent(BaseEvent):
     username: str
     timestamp: float
 
-async def handle_login(event: UserLoginEvent):
-    print(f"User {event.username} logged in at {event.timestamp}")
+async def handle_login(login_event: UserLoginEvent):
+    auth_request = await bus.dispatch(AuthRequestEvent(...))  # dispatch a nested event
+    auth_response = await bus.expect(AuthResponseEvent)       # wait for an event to be seen
+
+    print(f"User {event.username} logged in at {event.timestamp} with API key: {await auth_response.event_result()}")
     return {"status": "success", "user": event.username}
 
-bus = EventBus()
+
 bus.on('UserLoginEvent', handle_login)
 
 event = bus.dispatch(UserLoginEvent(username="alice", timestamp=1234567890))
