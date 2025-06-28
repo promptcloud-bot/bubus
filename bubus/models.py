@@ -129,6 +129,8 @@ EventHandler: TypeAlias = (
     # | Callable[['BaseEvent'], Awaitable[Any]]  # Simple async callable
     # | Coroutine[Any, Any, Any]  # Direct coroutine
 )
+
+# ContravariantEventHandler is needed to allow handlers to accept any BaseEvent subclass in some signatures
 ContravariantEventHandler: TypeAlias = (
     EventHandlerFunc[T_Event]  # cannot be BaseEvent or type checker will complain
     | AsyncEventHandlerFunc['BaseEvent']
@@ -149,7 +151,7 @@ def get_handler_name(handler: ContravariantEventHandler[T_Event]) -> str:
         raise ValueError(f'Invalid handler: {handler} {type(handler)}, expected a function, coroutine, or method')
 
 
-def get_handler_id(handler: EventHandler, eventbus: 'EventBus | None' = None) -> str:
+def get_handler_id(handler: EventHandler, eventbus: EventBus | None = None) -> str:
     """Generate a unique handler ID based on the bus and handler instance."""
     if eventbus is None:
         return str(id(handler))
@@ -422,9 +424,7 @@ class BaseEvent(BaseModel):
             )  # append the contents of the list to the merged list
         return merged_results
 
-    def event_result_update(
-        self, handler: EventHandler, eventbus: EventBus | None = None, **kwargs: Any
-    ) -> EventResult:
+    def event_result_update(self, handler: EventHandler, eventbus: EventBus | None = None, **kwargs: Any) -> EventResult:
         """Create or update an EventResult for a handler"""
 
         from bubus.service import EventBus

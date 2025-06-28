@@ -14,7 +14,7 @@ PSUTIL_AVAILABLE = False
 try:
     import psutil  # type: ignore[import]
 
-    PSUTIL_AVAILABLE = True   # type: ignore[assignment]
+    PSUTIL_AVAILABLE = True  # type: ignore[assignment]
 except ImportError:
     psutil = None
     pass
@@ -33,7 +33,7 @@ def time_execution(
     additional_text: str = '',
 ) -> Callable[[Callable[P, Coroutine[Any, Any, R]]], Callable[P, Coroutine[Any, Any, R]]]:
     """Decorator that logs how much time execution of a function takes"""
-    
+
     def decorator(func: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, Coroutine[Any, Any, R]]:
         @wraps(func)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -121,7 +121,7 @@ def _get_semaphore_key(
 ) -> str:
     """Determine the semaphore key based on scope."""
     base_name = semaphore_name or func_name
-    
+
     if semaphore_scope == 'multiprocess':
         return base_name
     elif semaphore_scope == 'global':
@@ -230,16 +230,15 @@ async def _acquire_asyncio_semaphore(
                 f'(limit={semaphore_limit}, timeout={timeout}s per operation)'
             )
         logger.warning(
-            f'Failed to acquire semaphore "{sem_key}" after {sem_wait_time:.1f}s, '
-            f'proceeding without concurrency limit'
+            f'Failed to acquire semaphore "{sem_key}" after {sem_wait_time:.1f}s, proceeding without concurrency limit'
         )
         return False
 
 
 async def _execute_with_retries(
     func: Callable[P, Coroutine[Any, Any, T]],
-    args: P.args,       # type: ignore
-    kwargs: P.kwargs,   # type: ignore
+    args: P.args,  # type: ignore
+    kwargs: P.kwargs,  # type: ignore
     retries: int,
     timeout: float,
     wait: float,
@@ -280,9 +279,9 @@ async def _execute_with_retries(
                     f'Semaphore wait: {sem_wait:.1f}s. Final error: {type(e).__name__}: {e}'
                 )
                 raise
-    
+
     # This should never be reached, but satisfies type checker
-    raise RuntimeError("Unexpected state in retry logic")
+    raise RuntimeError('Unexpected state in retry logic')
 
 
 def _track_active_operations(increment: bool = True) -> None:
@@ -303,9 +302,7 @@ def _check_system_overload_if_needed() -> None:
         _last_overload_check = current_time
         is_overloaded, reason = _check_system_overload()
         if is_overloaded:
-            logger.warning(
-                f'⚠️  System overload detected: {reason}. Consider reducing concurrent operations to prevent hanging.'
-            )
+            logger.warning(f'⚠️  System overload detected: {reason}. Consider reducing concurrent operations to prevent hanging.')
 
 
 def retry(
@@ -367,10 +364,10 @@ def retry(
                 # Get semaphore key and create/retrieve semaphore
                 sem_key = _get_semaphore_key(func.__name__, semaphore_name, semaphore_scope, args)
                 semaphore = _get_or_create_semaphore(sem_key, semaphore_limit, semaphore_scope)
-                
+
                 # Calculate timeout for semaphore acquisition
                 sem_timeout = _calculate_semaphore_timeout(semaphore_timeout, timeout, semaphore_limit)
-                
+
                 # Acquire semaphore based on type
                 if semaphore_scope == 'multiprocess':
                     semaphore_acquired, multiprocess_lock = await _acquire_multiprocess_semaphore(
@@ -389,13 +386,12 @@ def retry(
             start_time = time.time()
             try:
                 return await _execute_with_retries(
-                    func, args, kwargs, retries, timeout, wait, backoff_factor,
-                    retry_on, start_time, sem_start, semaphore_limit
+                    func, args, kwargs, retries, timeout, wait, backoff_factor, retry_on, start_time, sem_start, semaphore_limit
                 )
             finally:
                 # Clean up: decrement active operations and release semaphore
                 _track_active_operations(increment=False)
-                
+
                 if semaphore_acquired and semaphore:
                     if semaphore_scope == 'multiprocess' and multiprocess_lock:
                         await asyncio.to_thread(lambda: multiprocess_lock.release())

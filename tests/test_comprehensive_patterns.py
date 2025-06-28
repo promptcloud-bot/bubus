@@ -193,7 +193,7 @@ async def test_race_condition_stress():
         # Verify all have correct parent
         assert all(c.event_parent_id == event.event_id for c in children)
         return 'parent_done'
-    
+
     def bad_handler(bad: BaseEvent):
         pass
 

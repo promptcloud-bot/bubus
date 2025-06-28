@@ -1,5 +1,6 @@
 import asyncio
 import contextvars
+import gc
 import inspect
 import logging
 import warnings
@@ -15,11 +16,11 @@ from uuid_extensions import uuid7str
 
 from bubus.models import (
     BUBUS_LOG_LEVEL,
-    ContravariantEventHandler,
     AsyncEventHandlerClassMethod,
     AsyncEventHandlerFunc,
     AsyncEventHandlerMethod,
     BaseEvent,
+    ContravariantEventHandler,
     EventHandler,
     EventHandlerClassMethod,
     EventHandlerFunc,
@@ -240,6 +241,17 @@ class EventBus:
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
         assert self.name.isidentifier(), f'EventBus name must be a unique identifier string, got: {self.name}'
+
+        # Force garbage collection to clean up any dead EventBus instances in the WeakSet
+        gc.collect()
+
+        # Check for name uniqueness among existing instances
+        for existing_bus in EventBus.all_instances:
+            if existing_bus is not self and existing_bus.name == self.name:
+                raise ValueError(
+                    f'EventBus with name "{self.name}" already exists. Please choose a unique name or let it auto-generate.'
+                )
+
         self.event_queue = None
         self.event_history = {}
         self.handlers = defaultdict(list)
@@ -317,6 +329,7 @@ class EventBus:
     @overload
     def on(self, event_pattern: EventPatternType, handler: AsyncEventHandlerClassMethod[BaseEvent]) -> None: ...
 
+    # I dont think this is needed, but leaving it here for now
     # 9. Coroutine[Any, Any, Any] - direct coroutine
     # @overload
     # def on(self, event_pattern: EventPatternType, handler: Coroutine[Any, Any, Any]) -> None: ...
@@ -324,7 +337,7 @@ class EventBus:
     def on(
         self,
         event_pattern: EventPatternType,
-        handler: (
+        handler: (  # TypeAlias with args doesnt work on overloaded signature, has to be defined inline
             EventHandlerFunc[T_Event]
             | AsyncEventHandlerFunc[BaseEvent]
             | EventHandlerMethod[T_Event]
