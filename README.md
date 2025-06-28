@@ -512,11 +512,16 @@ uv sync --dev --all-extras
 ```
 
 ```bash
+# Run linter & type checker
+uv run ruff check --fix
+uv run ruff format
+uv run pyright
+
 # Run all tests
-pytest tests -v x --full-trace
+uv run pytest -vxs --full-trace tests/
 
 # Run specific test file
-pytest tests/test_eventbus.py
+uv run pytest tests/test_eventbus.py
 ```
 
 ## Inspiration
