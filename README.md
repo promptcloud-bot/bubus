@@ -1,8 +1,8 @@
-# `bubus`: 📢 Pydantic-based event bus for async Python
+# `bubus`: 📢 Production-ready event bus library for async Python
 
 Bubus is a fully-featured, Pydantic-powered event bus library for async Python.
 
-It's designed for building reactive, event-driven applications with Python. It provides a powerful yet simple API for implementing publish-subscribe patterns with type safety, async handlers, and advanced features like event forwarding between buses.
+It's designed for building reactive, event-driven applications with Python. It provides a powerful yet simple [pydantic](https://docs.pydantic.dev/latest/)-based API for implementing publish-subscribe patterns with type safety, async/sync handler support, and advanced features like event forwarding between buses.
 
 ## 🔢 Quickstart
 
