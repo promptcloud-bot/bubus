@@ -1,4 +1,4 @@
-# `bubus`: 📢 Production-ready event bus library for async Python
+# `bubus`: 📢 Production-ready event bus library for Python
 
 Bubus is a fully-featured, Pydantic-powered event bus library for async Python.
 
