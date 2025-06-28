@@ -682,6 +682,8 @@ class TestRetryWithEventBus:
 
                 return f'Handler {handler_id} processed work {event.work_id}'
 
+            # Give each handler a unique name
+            limited_handler.__name__ = f'limited_handler_{handler_id}'
             return limited_handler
 
         # Register multiple handlers
