@@ -532,11 +532,13 @@ handler_result = event.event_results['handler_id']
 value = await handler_result  # Returns result or raises an exception if handler hits an error
 ```
 
-## Extras
+---
+
+## 🧵 Advanced Concurrency Control
 
 ### `@retry` Decorator
 
-The `@retry` decorator provides automatic retry functionality with built-in concurrency control for event handlers. This is particularly useful when handlers interact with external services that may temporarily fail.
+The `@retry` decorator provides automatic retry functionality with built-in concurrency control for any function, including event handlers. This is particularly useful when handlers interact with external services that may temporarily fail.
 
 ```python
 from bubus import EventBus, BaseEvent
@@ -566,11 +568,16 @@ bus.on(FetchDataEvent, fetch_with_retry)
 
 #### Retry Parameters
 
+- **`timeout`**: Maximum amount of time function is allowd to take per attempt, in seconds (default: 5)
+- **`retries`**: Number of additional retry attempts if function raises an exception (default: 3)
+- **`retry_on`**: Tuple of exception types to retry on (default: `None` = retry on any `Exception`)
 - **`wait`**: Base seconds to wait between retries (default: 3)
-- **`retries`**: Number of retry attempts after initial failure (default: 3)
-- **`timeout`**: Per-attempt timeout in seconds (default: 5)
-- **`retry_on`**: Tuple of exception types to retry on (default: None = retry all)
 - **`backoff_factor`**: Multiplier for wait time after each retry (default: 1.0)
+- **`semaphore_limit`**: Maximum number of concurrent calls that can run at the same time
+- **`semaphore_scope`**: Scope for the semaphore: `class`, `self`, `global`, or `multiprocess`
+- **`semaphore_timeout`**: Maximum time to wait for a semaphore slot before proceeding or failing
+- **`semaphore_lax`**: Continue anyway if semaphore fails to be aquired in within the given time
+- **`semaphore_name`**: Unique semaphore name to allow sharing a semaphore between functions
 
 #### Semaphore Options
 
