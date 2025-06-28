@@ -7,7 +7,6 @@ import weakref
 from collections import defaultdict, deque
 from collections.abc import Callable
 from contextvars import ContextVar
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -119,42 +118,45 @@ _inside_handler_context: ContextVar[bool] = ContextVar('inside_handler', default
 # Context variable to track if we hold the global lock (for re-entrancy across tasks)
 _holds_global_lock: ContextVar[bool] = ContextVar('holds_global_lock', default=False)
 
+
 class ReentrantLock:
     """A re-entrant lock that works across different asyncio tasks using ContextVar."""
-    
+
     def __init__(self):
         self._semaphore = asyncio.Semaphore(1)
         self._depth = 0  # Track re-entrance depth
-    
+
     async def __aenter__(self):
         if _holds_global_lock.get():
             # We already hold the lock in this context, increment depth
             self._depth += 1
             return self
-        
+
         # Acquire the lock
         await self._semaphore.acquire()
         _holds_global_lock.set(True)
         self._depth = 1
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if not _holds_global_lock.get():
             # We don't hold the lock, nothing to do
             return
-            
+
         self._depth -= 1
         if self._depth == 0:
             # Last exit, release the lock
             _holds_global_lock.set(False)
             self._semaphore.release()
-    
+
     def locked(self) -> bool:
         """Check if the lock is currently held."""
         return self._semaphore.locked()
 
+
 # Global re-entrant lock shared by all EventBus instances
 _global_eventbus_lock: ReentrantLock | None = None
+
 
 def _get_global_lock() -> ReentrantLock:
     """Get or create the global EventBus lock."""
@@ -195,7 +197,7 @@ class EventBus:
     - FIFP Write-ahead logging with UUIDs and timestamps,
     - Serial event processing, parallel handler execution per event
     """
-    
+
     # Track all EventBus instances (using weakrefs to allow garbage collection)
     _all_instances: weakref.WeakSet['EventBus'] = weakref.WeakSet()
 
@@ -226,7 +228,7 @@ class EventBus:
         self.parallel_handlers = parallel_handlers
         self.wal_path = Path(wal_path) if wal_path else None
         self._on_idle = None
-        
+
         # Register this instance
         EventBus._all_instances.add(self)
 
@@ -344,7 +346,6 @@ class EventBus:
             current_event = _current_event_context.get()
             if current_event is not None:
                 event.event_parent_id = current_event.event_id
-        
 
         # Add this EventBus to the event_path if not already there
         if self.name not in event.event_path:
@@ -600,9 +601,7 @@ class EventBus:
     async def _get_next_event(self, wait_for_timeout: float = 0.1) -> BaseEvent | None:
         """Get the next event from the queue"""
 
-        assert self._on_idle and self.event_queue, (
-            'EventBus._start() must be called before _get_next_event()'
-        )
+        assert self._on_idle and self.event_queue, 'EventBus._start() must be called before _get_next_event()'
         if not self._is_running:
             return None
 
@@ -633,13 +632,11 @@ class EventBus:
         self, event: BaseEvent | None = None, timeout: float | None = None, wait_for_timeout: float = 0.1
     ) -> BaseEvent | None:
         """Process a single event from the queue"""
-        assert self._on_idle and self.event_queue, (
-            'EventBus._start() must be called before _run_loop_step()'
-        )
+        assert self._on_idle and self.event_queue, 'EventBus._start() must be called before _run_loop_step()'
 
         # Track if we got the event from the queue
         from_queue = False
-        
+
         # Wait for next event with timeout to periodically check idle state
         if event is None:
             event = await self._get_next_event(wait_for_timeout=wait_for_timeout)
@@ -663,15 +660,15 @@ class EventBus:
 
         logger.debug(f'✅ {self}._run_loop_step({event}) COMPLETE')
         return event
-    
+
     async def _process_event(self, event: BaseEvent, timeout: float | None = None) -> None:
         """Process a single event (assumes lock is already held)"""
         # Get applicable handlers
         applicable_handlers = self._get_applicable_handlers(event)
-        
+
         # Execute handlers
         await self._execute_handlers(event, handlers=applicable_handlers, timeout=timeout)
-        
+
         await self._default_log_handler(event)
         await self._default_wal_handler(event)
 
@@ -695,7 +692,7 @@ class EventBus:
             if self._would_create_loop(event, handler):
                 continue
             else:
-                handler_id = f"{id(self)}.{id(handler)}"  # Unique per bus+handler
+                handler_id = f'{id(self)}.{id(handler)}'  # Unique per bus+handler
                 filtered_handlers[handler_id] = handler
                 logger.debug(f'  Added handler {get_handler_name(handler)} with ID {handler_id}')
 
@@ -746,8 +743,8 @@ class EventBus:
         """Safely execute a single handler with deadlock detection"""
 
         # Check if this handler has already been executed for this event
-        handler_id = f"{id(self)}.{id(handler)}"  # Unique per bus+handler
-        
+        handler_id = f'{id(self)}.{id(handler)}'  # Unique per bus+handler
+
         logger.debug(f' ↳ {self}._execute_handler({event}, handler={get_handler_name(handler)}#{str(id(handler))[-4:]})')
         logger.debug(f'    Handler ID: {handler_id}')
         if handler_id in event.event_results:
@@ -790,13 +787,15 @@ class EventBus:
                 # If handler function is sync function, run it directly in the main thread
                 # This blocks but ensures we have access to the event loop, dont run it in a subthread!
                 result_value: Any = handler(event)
-                
+
                 # If the sync handler returned a BaseEvent (from dispatch), DON'T await it
                 # For forwarding handlers like bus.on('*', other_bus.dispatch), the handler
                 # has already queued the event on the target bus. The event will be tracked
                 # as a child event automatically.
                 if isinstance(result_value, BaseEvent):
-                    logger.debug(f"Handler {get_handler_name(handler)} returned BaseEvent, not awaiting to avoid circular dependency")
+                    logger.debug(
+                        f'Handler {get_handler_name(handler)} returned BaseEvent, not awaiting to avoid circular dependency'
+                    )
             else:
                 raise ValueError(f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}')
 
@@ -863,7 +862,7 @@ class EventBus:
         # Second check: Check if there's already a result (pending or completed) for this handler on THIS bus
         # We use a combination of bus ID and handler ID to allow the same handler function
         # to run on different buses (important for forwarding)
-        handler_id = f"{id(self)}.{id(handler)}"  # Unique per bus+handler combination
+        handler_id = f'{id(self)}.{id(handler)}'  # Unique per bus+handler combination
         if handler_id in event.event_results:
             existing_result = event.event_results[handler_id]
             if existing_result.status == 'pending' or existing_result.status == 'started':
@@ -876,15 +875,13 @@ class EventBus:
                     f'⚠️ {self} handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) already completed @ {existing_result.completed_at} for event {event.event_id} (will not re-run)'
                 )
                 return True
-        
+
         # Third check: For non-forwarding handlers, check recursion depth
         # Forwarding handlers (EventBus.dispatch) are allowed to forward at any depth
         is_forwarding_handler = (
-            hasattr(handler, '__self__') and 
-            isinstance(handler.__self__, EventBus) and 
-            handler.__name__ == 'dispatch'
+            hasattr(handler, '__self__') and isinstance(handler.__self__, EventBus) and handler.__name__ == 'dispatch'
         )
-        
+
         if not is_forwarding_handler:
             # Only check recursion for regular handlers, not forwarding
             recursion_depth = self._handler_dispatched_ancestor(event, handler_id)
@@ -901,8 +898,10 @@ class EventBus:
                 )
 
         return False
-    
-    def _handler_dispatched_ancestor(self, event: BaseEvent, handler_id: str, visited: set[str] | None = None, depth: int = 0) -> int:
+
+    def _handler_dispatched_ancestor(
+        self, event: BaseEvent, handler_id: str, visited: set[str] | None = None, depth: int = 0
+    ) -> int:
         """Check how many times this handler appears in the ancestry chain. Returns the depth count."""
         # Prevent infinite recursion in case of circular parent references
         if visited is None:
@@ -910,28 +909,28 @@ class EventBus:
         if event.event_id in visited:
             return depth
         visited.add(event.event_id)
-        
+
         # If this event has no parent, it's a root event - no ancestry to check
         if not event.event_parent_id:
             return depth
-            
+
         # Find parent event in any bus's history
         parent_event = None
         for bus in EventBus._all_instances:
             if event.event_parent_id in bus.event_history:
                 parent_event = bus.event_history[event.event_parent_id]
                 break
-                
+
         if not parent_event:
             return depth
-            
+
         # Check if this handler processed the parent event
         if handler_id in parent_event.event_results:
             result = parent_event.event_results[handler_id]
             if result.status in ('pending', 'started', 'completed'):
                 # This handler processed the parent event, increment depth
                 depth += 1
-                
+
         # Recursively check the parent's ancestry
         return self._handler_dispatched_ancestor(parent_event, handler_id, visited, depth)
 
@@ -955,8 +954,9 @@ class EventBus:
                 await f.write(event_json + '\n')
         except Exception as e:
             logger.error(f'❌ {self} Failed to save event {event.event_id} to WAL file: {type(e).__name__} {e}\n{event}')
-    
+
     def _log_tree(self) -> None:
         """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
         from bubus.logging import _log_eventbus_tree
+
         _log_eventbus_tree(self)

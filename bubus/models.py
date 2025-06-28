@@ -95,6 +95,7 @@ class BaseEvent(BaseModel):
     # Completion signal
     _event_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
     _event_processed_at: datetime | None = PrivateAttr(default=None)
+
     def __hash__(self) -> int:
         """Make events hashable using their unique event_id"""
         return hash(self.event_id)
@@ -121,27 +122,27 @@ class BaseEvent(BaseModel):
 
             # If we're inside a handler and this event isn't complete yet,
             # we need to process it immediately to avoid deadlock
-            from bubus.service import _inside_handler_context, _holds_global_lock, EventBus
-            
+            from bubus.service import EventBus, _holds_global_lock, _inside_handler_context
+
             if not self.event_completed_signal.is_set() and _inside_handler_context.get() and _holds_global_lock.get():
                 # We're inside a handler and hold the global lock
                 # Process events until this one completes
-                
-                logger.debug(f"__await__ for {self} - inside handler context, processing child events")
-                
+
+                logger.debug(f'__await__ for {self} - inside handler context, processing child events')
+
                 # Keep processing events from all buses until this event is complete
                 max_iterations = 1000  # Prevent infinite loops
                 iterations = 0
-                
+
                 while not self.event_completed_signal.is_set() and iterations < max_iterations:
                     iterations += 1
                     processed_any = False
-                    
+
                     # Process any queued events on all buses
                     for bus in EventBus._all_instances:
                         if not bus or not bus.event_queue:
                             continue
-                            
+
                         # Process one event from this bus if available
                         try:
                             if bus.event_queue.qsize() > 0:
@@ -151,13 +152,13 @@ class BaseEvent(BaseModel):
                                 processed_any = True
                         except asyncio.QueueEmpty:
                             pass
-                    
+
                     if not processed_any:
                         # No events to process, yield control
                         await asyncio.sleep(0)
-                
+
                 if iterations >= max_iterations:
-                    logger.error(f"Max iterations reached while waiting for {self}")
+                    logger.error(f'Max iterations reached while waiting for {self}')
 
             try:
                 await asyncio.wait_for(self.event_completed_signal.wait(), timeout=self.event_timeout)
@@ -204,7 +205,7 @@ class BaseEvent(BaseModel):
     @property
     def event_status(self) -> str:
         return 'completed' if self.event_completed_at else 'started' if self.event_started_at else 'pending'
-    
+
     @property
     def event_children(self) -> list[BaseEvent]:
         """Get all child events dispatched from within this event's handlers"""
@@ -236,7 +237,11 @@ class BaseEvent(BaseModel):
 
         # Return the latest completion time
         completed_times = [result.completed_at for result in self.event_results.values() if result.completed_at is not None]
-        return max(completed_times) if completed_times else (self._event_processed_at if hasattr(self, '_event_processed_at') else None)
+        return (
+            max(completed_times)
+            if completed_times
+            else (self._event_processed_at if hasattr(self, '_event_processed_at') else None)
+        )
 
     async def event_result(self, timeout: float | None = None) -> Any:
         """Get the first non-None result from the event handlers"""
@@ -330,9 +335,9 @@ class BaseEvent(BaseModel):
         handler_name: str = get_handler_name(handler) if handler else 'unknown_handler'
         eventbus_id: PythonIdStr = str(id(eventbus) if eventbus is not None else '000000000000')
         eventbus_name: PythonIdentifierStr = str(eventbus and eventbus.name or 'EventBus')
-        
+
         # Use bus+handler combination for unique ID
-        handler_id: PythonIdStr = f"{eventbus_id}.{id(handler)}" if eventbus else str(id(handler))
+        handler_id: PythonIdStr = f'{eventbus_id}.{id(handler)}' if eventbus else str(id(handler))
 
         # Get or create EventResult
         if handler_id not in self.event_results:
@@ -369,21 +374,21 @@ class BaseEvent(BaseModel):
             all_handlers_done = all(result.status in ('completed', 'error') for result in self.event_results.values())
             if not all_handlers_done:
                 return
-                
+
             # Recursively check if all child events are also complete
             if not self._are_all_children_complete():
                 return
-            
+
             # All handlers and all child events are done
             if hasattr(self, '_event_processed_at'):
                 self._event_processed_at = datetime.now(UTC)
             self.event_completed_signal.set()
-    
+
     def _are_all_children_complete(self) -> bool:
         """Recursively check if all child events and their descendants are complete"""
         for child_event in self.event_children:
             if child_event.event_status != 'completed':
-                logger.debug(f"Event {self} has incomplete child {child_event}")
+                logger.debug(f'Event {self} has incomplete child {child_event}')
                 return False
             # Recursively check child's children
             if not child_event._are_all_children_complete():
@@ -393,10 +398,13 @@ class BaseEvent(BaseModel):
     def _log_safe_summary(self) -> dict[str, Any]:
         """only event metadata without contents, avoid potentially sensitive event contents in logs"""
         return {k: v for k, v in self.model_dump(mode='json').items() if k.startswith('event_') and 'results' not in k}
-    
-    def _log_tree(self, indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None) -> None:
+
+    def _log_tree(
+        self, indent: str = '', is_last: bool = True, child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None
+    ) -> None:
         """Print this event and its results with proper tree formatting"""
         from bubus.logging import _log_event_tree
+
         _log_event_tree(self, indent, is_last, child_events_by_parent)
 
 
@@ -513,10 +521,13 @@ class EventResult(BaseModel):
             self.completed_at = datetime.now(UTC)
             if self.handler_completed_signal:
                 self.handler_completed_signal.set()
-    
-    def _log_tree(self, indent: str = "", is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent]] | None = None) -> None:
+
+    def _log_tree(
+        self, indent: str = '', is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent]] | None = None
+    ) -> None:
         """Print this result and its child events with proper tree formatting"""
         from bubus.logging import _log_eventresult_tree
+
         _log_eventresult_tree(self, indent, is_last, child_events_by_parent)
 
 
