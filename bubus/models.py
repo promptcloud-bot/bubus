@@ -218,7 +218,7 @@ class BaseEvent(BaseModel):
         """Timestamp when event first started being processed by any handler"""
         started_times = [result.started_at for result in self.event_results.values() if result.started_at is not None]
         # If no handlers but event was processed, use the processed timestamp
-        if not started_times and self._event_processed_at:
+        if not started_times and hasattr(self, '_event_processed_at') and self._event_processed_at:
             return self._event_processed_at
         return min(started_times) if started_times else None
 
@@ -226,7 +226,7 @@ class BaseEvent(BaseModel):
     def event_completed_at(self) -> datetime | None:
         """Timestamp when event was completed by all handlers"""
         # If no handlers at all but event was processed, use the processed timestamp
-        if not self.event_results and self._event_processed_at:
+        if not self.event_results and hasattr(self, '_event_processed_at') and self._event_processed_at:
             return self._event_processed_at
 
         # All handlers must be done (completed or error)
@@ -236,7 +236,7 @@ class BaseEvent(BaseModel):
 
         # Return the latest completion time
         completed_times = [result.completed_at for result in self.event_results.values() if result.completed_at is not None]
-        return max(completed_times) if completed_times else self._event_processed_at
+        return max(completed_times) if completed_times else (self._event_processed_at if hasattr(self, '_event_processed_at') else None)
 
     async def event_result(self, timeout: float | None = None) -> Any:
         """Get the first non-None result from the event handlers"""
@@ -360,7 +360,8 @@ class BaseEvent(BaseModel):
         if self.event_completed_signal and not self.event_completed_signal.is_set():
             # If there are no results at all, the event is complete
             if not self.event_results:
-                self._event_processed_at = datetime.now(UTC)
+                if hasattr(self, '_event_processed_at'):
+                    self._event_processed_at = datetime.now(UTC)
                 self.event_completed_signal.set()
                 return
 
@@ -374,7 +375,8 @@ class BaseEvent(BaseModel):
                 return
             
             # All handlers and all child events are done
-            self._event_processed_at = datetime.now(UTC)
+            if hasattr(self, '_event_processed_at'):
+                self._event_processed_at = datetime.now(UTC)
             self.event_completed_signal.set()
     
     def _are_all_children_complete(self) -> bool:
