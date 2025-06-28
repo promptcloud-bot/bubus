@@ -407,6 +407,28 @@ class BaseEvent(BaseModel):
 
         _log_event_tree(self, indent, is_last, child_events_by_parent)
 
+    @property
+    def event_bus(self) -> 'EventBus':
+        """Get the EventBus that is currently processing this event"""
+        from bubus.service import EventBus, _inside_handler_context
+
+        if not _inside_handler_context.get():
+            raise RuntimeError('event_bus property can only be accessed from within an event handler')
+
+        # The event_path contains all buses this event has passed through
+        # The last one in the path is the one currently processing
+        if not self.event_path:
+            raise RuntimeError('Event has no event_path - was it dispatched?')
+
+        current_bus_name = self.event_path[-1]
+        
+        # Find the bus by name
+        for bus in EventBus._all_instances:
+            if bus and hasattr(bus, 'name') and bus.name == current_bus_name:
+                return bus
+
+        raise RuntimeError(f'Could not find active EventBus named {current_bus_name}')
+
 
 def attr_name_allowed(key: str):
     return key in pydantic_builtin_attrs or key in event_builtin_attrs or key.startswith('_')
