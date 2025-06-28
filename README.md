@@ -46,7 +46,7 @@ print(f"Login handled: {result.event_results}")
 
 ## ✨ Features
 
-### Type-Safe Events with Pydantic
+### 🔠 Type-Safe Events with Pydantic
 
 Define events as Pydantic models with full type checking and validation:
 
@@ -69,7 +69,7 @@ event = OrderCreatedEvent(
 )
 ```
 
-### Async and Sync Handler Support
+### 🔀 Async and Sync Handler Support
 
 Register both synchronous and asynchronous handlers for maximum flexibility:
 
@@ -110,7 +110,7 @@ bus.on('MyEvent', SomeClass.handler_can_be_classmethods)
 bus.on('MyEvent', SomeClass.handlers_can_be_staticmethods)
 ```
 
-### Event Pattern Matching
+### 🔎 Event Pattern Matching
 
 Subscribe to events using multiple patterns:
 
@@ -125,7 +125,7 @@ bus.on(UserActionEvent, handler)
 bus.on('*', universal_handler)
 ```
 
-### Forward `Events` Between `EventBus`s 
+### ⏩ Forward `Events` Between `EventBus`s 
 
 You can define separate `EventBus` instances in different "microservices" to separate different areas of concern.
 `EventBus`s can be set up to forward events between each other (with automatic loop prevention):
@@ -146,7 +146,7 @@ await event
 print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of buses that have already procssed the event
 ```
 
-### Event Results Aggregation
+### 🔱 Event Results Aggregation
 
 Collect and aggregate results from multiple handlers:
 
@@ -170,7 +170,7 @@ config = await event.event_results_flat_dict()
 results = await event.event_results_by_handler_id()
 ```
 
-### FIFO Event Processing
+### 🚦 FIFO Event Processing
 
 Events are processed in strict FIFO order, maintaining consistency:
 
@@ -203,7 +203,7 @@ await bus.dispatch(MainEvent()).event_result()
 # result from awaiting child event: xyz123
 ```
 
-### Parallel Handler Execution
+### ⛓️ Parallel Handler Execution
 
 Enable parallel processing of handlers for better performance.  
 The tradeoff is slightly less deterministic ordering as handler execution order will not be guaranteed when run in parallel.
@@ -221,7 +221,7 @@ await bus.dispatch(DataEvent())
 # Total time: ~1 second (not 2)
 ```
 
-### Dispatch Nested Child Events From Handlers
+### 🪆 Dispatch Nested Child Events From Handlers
 
 Automatically track event relationships and causality tree:
 
@@ -251,7 +251,7 @@ print(bus.log_tree())                        # print a nice pretty tree view of 
 <img width="1145" alt="image" src="https://github.com/user-attachments/assets/f94684a6-7694-4066-b948-46925f47b56c" />
 
 
-### Expect an Event to be Dispatched
+### ⏳ Expect an Event to be Dispatched
 
 Wait for specific events to be seen on a bus with optional filtering:
 
@@ -271,7 +271,7 @@ response_event = await bus.expect(
 > [!IMPORTANT]
 > `expect()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. `await response_event` to get the completed event.
 
-### Write-Ahead Logging
+### 📝 Write-Ahead Logging
 
 Persist events automatically for durability and debugging:
 
