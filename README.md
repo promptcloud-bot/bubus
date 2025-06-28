@@ -1,8 +1,8 @@
-# `bubus`: Pydantic-based event bus for async Python
+# `bubus`: 📢 Pydantic-based event bus for async Python
 
 Bubus is an advanced Pydantic-powered event bus with async support, designed for building reactive, event-driven applications with Python. It provides a powerful yet simple API for implementing publish-subscribe patterns with type safety, async handlers, and advanced features like event forwarding between buses.
 
-## Quickstart
+## 🔢 Quickstart
 
 Install bubus and get started with a simple event-driven application:
 
@@ -36,7 +36,7 @@ print(f"Login handled: {result.event_results}")
 
 <br/>
 
-## Features
+## ✨ Features
 
 ### Type-Safe Events with Pydantic
 
@@ -262,7 +262,7 @@ bus.dispatch(ImportantEvent(data="critical"))
 
 <br/>
 
-## API Documentation
+## 📚 API Documentation
 
 ### `EventBus`
 
@@ -492,7 +492,7 @@ value = await handler_result  # Returns result or raises an exception if handler
 
 <br/>
 
-## Development
+## 👾 Development
 
 Set up the development environment using `uv`:
 
@@ -524,7 +524,7 @@ uv run pytest -vxs --full-trace tests/
 uv run pytest tests/test_eventbus.py
 ```
 
-## Inspiration
+## 🔗 Inspiration
 
 - https://www.cosmicpython.com/book/chapter_08_events_and_message_bus.html#message_bus_diagram ⭐️
 - https://developer.mozilla.org/en-US/docs/Web/API/EventTarget ⭐️
@@ -543,6 +543,6 @@ uv run pytest tests/test_eventbus.py
 - https://github.com/AngusWG/simple-event-bus
 - https://www.joeltok.com/posts/2021-03-building-an-event-bus-in-python/
 
-## License
+## 🏛️ License
 
 This project is licensed under the MIT License. For more information, see the main browser-use repository: https://github.com/browser-use/browser-use
