@@ -28,7 +28,7 @@ async def test_comprehensive_patterns():
     bus1 = EventBus(name='bus1')
     bus2 = EventBus(name='bus2')  # Fixed typo from 'bus1' to 'bus2'
 
-    results = []
+    results: list[tuple[int, str]] = []
     execution_counter = {'count': 0}  # Use a dict to track execution order
 
     def child_bus2_event_handler(event: BaseEvent):
@@ -151,10 +151,10 @@ async def test_comprehensive_patterns():
         if event.event_parent_id is None:
             print(f'  - {event}')
 
-    from bubus.logging import _log_eventbus_tree
+    from bubus.logging import log_eventbus_tree
 
-    _log_eventbus_tree(bus1)
-    _log_eventbus_tree(bus2)
+    log_eventbus_tree(bus1)
+    log_eventbus_tree(bus2)
 
     await bus1.stop()
     await bus2.stop()
@@ -167,7 +167,7 @@ async def test_race_condition_stress():
     bus1 = EventBus(name='bus1')
     bus2 = EventBus(name='bus2')
 
-    results = []
+    results: list[str] = []
 
     async def child_handler(event: BaseEvent):
         bus_name = event.event_path[-1] if event.event_path else 'unknown'
@@ -178,14 +178,14 @@ async def test_race_condition_stress():
 
     async def parent_handler(event: BaseEvent):
         # Dispatch multiple children in different ways
-        children = []
+        children: list[BaseEvent] = []
 
         # Async dispatches
-        for i in range(3):
+        for _ in range(3):
             children.append(bus1.dispatch(QueuedChildEvent()))
 
         # Sync dispatches
-        for i in range(3):
+        for _ in range(3):
             child = await bus1.dispatch(ImmediateChildEvent())
             assert child.event_status == 'completed'
             children.append(child)
@@ -193,6 +193,9 @@ async def test_race_condition_stress():
         # Verify all have correct parent
         assert all(c.event_parent_id == event.event_id for c in children)
         return 'parent_done'
+    
+    def bad_handler(bad: BaseEvent):
+        pass
 
     # Setup forwarding
     bus1.on('*', bus2.dispatch)
@@ -201,12 +204,13 @@ async def test_race_condition_stress():
     bus2.on(QueuedChildEvent, child_handler)
     bus2.on(ImmediateChildEvent, child_handler)
     bus1.on(BaseEvent, parent_handler)
+    bus1.on(BaseEvent, bad_handler)
 
     # Run multiple times to check for race conditions
     for run in range(5):
         results.clear()
 
-        parent = await bus1.dispatch(BaseEvent())
+        await bus1.dispatch(BaseEvent())
         await bus1.wait_until_idle()
         await bus2.wait_until_idle()
 
@@ -218,10 +222,10 @@ async def test_race_condition_stress():
 
     # Print event history tree for the last run
     print('\nEvent history for the last test run:')
-    from bubus.logging import _log_eventbus_tree
+    from bubus.logging import log_eventbus_tree
 
-    _log_eventbus_tree(bus1)
-    _log_eventbus_tree(bus2)
+    log_eventbus_tree(bus1)
+    log_eventbus_tree(bus2)
 
     await bus1.stop()
     await bus2.stop()

@@ -7,7 +7,19 @@
       "Bash(pytest:*)",
       "Bash(rg:*)",
       "Bash(python -m pytest tests/test_event_children.py -xvs)",
-      "Bash(uv run pytest:*)"
+      "Bash(uv run pytest:*)",
+      "Bash(python -m pytest tests/ -v --timeout=60)",
+      "Bash(pyright:*)",
+      "Bash(python -m pytest tests/test_semaphores.py -v)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "Bash(for i in {1..5})",
+      "Bash(do)",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(do echo \"Run $i:\")",
+      "Bash(python -m pytest tests/test_event_bus_property.py -v)"
     ],
     "deny": []
   }

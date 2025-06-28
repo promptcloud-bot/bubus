@@ -1,8 +1,9 @@
-"""Test the EventBus._log_tree() method"""
+"""Test the EventBus.log_tree() method"""
 
 import sys
 from datetime import UTC, datetime
 from io import StringIO
+from typing import Any
 
 from bubus import BaseEvent, EventBus
 from bubus.models import EventResult
@@ -17,29 +18,29 @@ class ChildEvent(BaseEvent):
 
 
 class GrandchildEvent(BaseEvent):
-    nested: dict = {'level': 3}
+    nested: dict[str, int] = {'level': 3}
 
 
-def test_log_history_tree_empty(capsys):
+def test_log_history_tree_empty(capsys: Any) -> None:
     """Test tree output with empty history"""
     bus = EventBus(name='EmptyBus')
-    bus._log_tree()
+    bus.log_tree()
 
     captured = capsys.readouterr()
     assert 'Event History Tree for EmptyBus' in captured.out
     assert '(No events in history)' in captured.out
 
 
-def test_log_history_tree_single_event(capsys):
+def test_log_history_tree_single_event(capsys: Any) -> None:
     """Test tree output with a single event"""
     bus = EventBus(name='SingleBus')
 
     # Create and add event to history
     event = RootEvent(data='test')
-    event._event_processed_at = datetime.now(UTC)
+    event.event_processed_at = datetime.now(UTC)
     bus.event_history[event.event_id] = event
 
-    bus._log_tree()
+    bus.log_tree()
 
     captured = capsys.readouterr()
     assert '└── ✅ RootEvent#' in captured.out
@@ -47,13 +48,13 @@ def test_log_history_tree_single_event(capsys):
     assert '[' in captured.out and ']' in captured.out
 
 
-def test_log_history_tree_with_handlers(capsys):
+def test_log_history_tree_with_handlers(capsys: Any) -> None:
     """Test tree output with event handlers and results"""
     bus = EventBus(name='HandlerBus')
 
     # Create event with handler results
     event = RootEvent(data='test')
-    event._event_processed_at = datetime.now(UTC)
+    event.event_processed_at = datetime.now(UTC)
 
     # Add handler result
     handler_id = f'{id(bus)}.123456'
@@ -70,7 +71,7 @@ def test_log_history_tree_with_handlers(capsys):
     )
 
     bus.event_history[event.event_id] = event
-    bus._log_tree()
+    bus.log_tree()
 
     captured = capsys.readouterr()
     assert '└── ✅ RootEvent#' in captured.out
@@ -78,12 +79,12 @@ def test_log_history_tree_with_handlers(capsys):
     assert 'dict(1 items)' in captured.out
 
 
-def test_log_history_tree_with_errors(capsys):
+def test_log_history_tree_with_errors(capsys: Any) -> None:
     """Test tree output with handler errors"""
     bus = EventBus(name='ErrorBus')
 
     event = RootEvent()
-    event._event_processed_at = datetime.now(UTC)
+    event.event_processed_at = datetime.now(UTC)
 
     # Add error result
     handler_id = f'{id(bus)}.789'
@@ -100,20 +101,20 @@ def test_log_history_tree_with_errors(capsys):
     )
 
     bus.event_history[event.event_id] = event
-    bus._log_tree()
+    bus.log_tree()
 
     captured = capsys.readouterr()
     assert '❌ ErrorBus.error_handler#' in captured.out
     assert '❌ ValueError: Test error message' in captured.out
 
 
-def test_log_history_tree_complex_nested():
+def test_log_history_tree_complex_nested() -> None:
     """Test tree output with complex nested events"""
     bus = EventBus(name='ComplexBus')
 
     # Create root event
     root = RootEvent(data='root_data')
-    root._event_processed_at = datetime.now(UTC)
+    root.event_processed_at = datetime.now(UTC)
 
     # Add root handler with child events
     root_handler_id = f'{id(bus)}.1001'
@@ -132,7 +133,7 @@ def test_log_history_tree_complex_nested():
     # Create child event
     child = ChildEvent(value=100)
     child.event_parent_id = root.event_id
-    child._event_processed_at = datetime.now(UTC)
+    child.event_processed_at = datetime.now(UTC)
 
     # Add child to root handler's event_children
     root.event_results[root_handler_id].event_children.append(child)
@@ -154,7 +155,7 @@ def test_log_history_tree_complex_nested():
     # Create grandchild
     grandchild = GrandchildEvent()
     grandchild.event_parent_id = child.event_id
-    grandchild._event_processed_at = datetime.now(UTC)
+    grandchild.event_processed_at = datetime.now(UTC)
 
     # Add grandchild to child handler's event_children
     child.event_results[child_handler_id].event_children.append(grandchild)
@@ -183,7 +184,7 @@ def test_log_history_tree_complex_nested():
     sys.stdout = captured_output
 
     try:
-        bus._log_tree()
+        bus.log_tree()
         output = captured_output.getvalue()
     finally:
         sys.stdout = sys.__stdout__
@@ -202,21 +203,21 @@ def test_log_history_tree_complex_nested():
     assert 'None' in output
 
 
-def test_log_history_tree_multiple_roots(capsys):
+def test_log_history_tree_multiple_roots(capsys: Any) -> None:
     """Test tree output with multiple root events"""
     bus = EventBus(name='MultiBus')
 
     # Create multiple root events
     root1 = RootEvent(data='first')
-    root1._event_processed_at = datetime.now(UTC)
+    root1.event_processed_at = datetime.now(UTC)
 
     root2 = RootEvent(data='second')
-    root2._event_processed_at = datetime.now(UTC)
+    root2.event_processed_at = datetime.now(UTC)
 
     bus.event_history[root1.event_id] = root1
     bus.event_history[root2.event_id] = root2
 
-    bus._log_tree()
+    bus.log_tree()
 
     captured = capsys.readouterr()
     # Both roots should be shown
@@ -224,12 +225,12 @@ def test_log_history_tree_multiple_roots(capsys):
     assert captured.out.count('└── ✅ RootEvent#') == 1  # Last root
 
 
-def test_log_history_tree_timing_info(capsys):
+def test_log_history_tree_timing_info(capsys: Any) -> None:
     """Test that timing information is displayed correctly"""
     bus = EventBus(name='TimingBus')
 
     event = RootEvent()
-    event._event_processed_at = datetime.now(UTC)
+    event.event_processed_at = datetime.now(UTC)
 
     # Add handler with timing
     start_time = datetime.now(UTC)
@@ -249,7 +250,7 @@ def test_log_history_tree_timing_info(capsys):
     )
 
     bus.event_history[event.event_id] = event
-    bus._log_tree()
+    bus.log_tree()
 
     captured = capsys.readouterr()
     # Should show timing with duration
@@ -257,7 +258,7 @@ def test_log_history_tree_timing_info(capsys):
     assert 's)' in captured.out  # Duration in seconds with closing parenthesis
 
 
-def test_log_history_tree_running_handler(capsys):
+def test_log_history_tree_running_handler(capsys: Any) -> None:
     """Test tree output with handlers still running"""
     bus = EventBus(name='RunningBus')
 
@@ -277,7 +278,7 @@ def test_log_history_tree_running_handler(capsys):
     )
 
     bus.event_history[event.event_id] = event
-    bus._log_tree()
+    bus.log_tree()
 
     captured = capsys.readouterr()
     assert '🏃 RunningBus.running_handler#' in captured.out

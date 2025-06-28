@@ -25,13 +25,13 @@ def format_result_value(value: Any) -> str:
     if isinstance(value, (str, int, float, bool)):
         return repr(value)
     if isinstance(value, dict):
-        return f'dict({len(value)} items)'
+        return f'dict({len(value)} items)'  # type: ignore[arg-type]
     if isinstance(value, list):
-        return f'list({len(value)} items)'
+        return f'list({len(value)} items)'  # type: ignore[arg-type]
     return f'{type(value).__name__}(...)'
 
 
-def _log_event_tree(
+def log_event_tree(
     event: 'BaseEvent',
     indent: str = '',
     is_last: bool = True,
@@ -58,14 +58,14 @@ def _log_event_tree(
     new_indent = indent + extension
 
     # Track which child events were printed via handlers to avoid duplicates
-    printed_child_ids = set()
+    printed_child_ids: set[str] = set()
 
     # Print each result
     if event.event_results:
         results_sorted = sorted(event.event_results.items(), key=lambda x: x[1].started_at or datetime.min.replace(tzinfo=UTC))
 
         # Calculate which is the last item considering both results and unmapped children
-        unmapped_children = []
+        unmapped_children: list[BaseEvent] = []
         if child_events_by_parent:
             all_children = child_events_by_parent.get(event.event_id, [])
             for child in all_children:
@@ -75,9 +75,9 @@ def _log_event_tree(
 
         total_items = len(results_sorted) + len(unmapped_children)
 
-        for i, (handler_id, result) in enumerate(results_sorted):
+        for i, (_handler_id, result) in enumerate(results_sorted):
             is_last_item = i == total_items - 1
-            _log_eventresult_tree(result, new_indent, is_last_item, child_events_by_parent)
+            log_eventresult_tree(result, new_indent, is_last_item, child_events_by_parent)
             # Track child events printed by this result
             for child in result.event_children:
                 printed_child_ids.add(child.event_id)
@@ -88,10 +88,10 @@ def _log_event_tree(
         for i, child in enumerate(children):
             if child.event_id not in printed_child_ids:
                 is_last_child = i == len(children) - 1
-                _log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
+                log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
 
 
-def _log_eventresult_tree(
+def log_eventresult_tree(
     result: 'EventResult',
     indent: str = '',
     is_last: bool = True,
@@ -142,10 +142,10 @@ def _log_eventresult_tree(
     if result.event_children:
         for i, child in enumerate(result.event_children):
             is_last_child = i == len(result.event_children) - 1
-            _log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
+            log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
 
 
-def _log_eventbus_tree(eventbus: 'EventBus') -> None:
+def log_eventbus_tree(eventbus: 'EventBus') -> None:
     """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
 
     # Build a mapping of parent_id to child events
@@ -177,9 +177,9 @@ def _log_eventbus_tree(eventbus: 'EventBus') -> None:
         print('  (No events in history)')
         return
 
-    # Print all root events using their _log_tree helper method
+    # Print all root events using their log_tree helper method
     for i, event in enumerate(root_events):
         is_last = i == len(root_events) - 1
-        _log_event_tree(event, '', is_last, parent_to_children)
+        log_event_tree(event, '', is_last, parent_to_children)
 
     print('=' * 80)

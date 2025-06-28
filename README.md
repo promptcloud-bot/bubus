@@ -87,6 +87,29 @@ bus.on('MyEvent', async_handler)
 bus.on('MyEvent', sync_handler)
 ```
 
+Handlers can also be defined under classes for easier organization:
+
+```python
+class SomeService:
+    some_value = 'this works'
+
+    async def handlers_can_be_methods(self, event: BaseEvent):
+        return self.some_value
+    
+    @classmethod
+    async def handler_can_be_classmethods(cls, event: BaseEvent):
+        return cls.some_value
+
+    @staticmethod
+    async def handlers_can_be_staticmethods(event: BaseEvent):
+        return 'this works too'
+
+# All usage patterns behave the same:
+bus.on('MyEvent', SomeClass().handlers_can_be_methods)
+bus.on('MyEvent', SomeClass.handler_can_be_classmethods)
+bus.on('MyEvent', SomeClass.handlers_can_be_staticmethods)
+```
+
 ### Event Pattern Matching
 
 Subscribe to events using multiple patterns:
@@ -120,7 +143,7 @@ auth_bus.on('*', data_bus.dispatch)
 # Events flow through the hierarchy with tracking
 event = main_bus.dispatch(MyEvent())
 await event
-print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of busses that have already procssed the event
+print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of buses that have already procssed the event
 ```
 
 ### Event Results Aggregation
@@ -160,7 +183,7 @@ for i in range(10):
 await bus.wait_until_idle()
 ```
 
-If a handler dispatches and awaits any child events during exeuction, those events will jump the FIFO queue and be processed immediately:
+If a handler dispatches and awaits any child events during execution, those events will jump the FIFO queue and be processed immediately:
 ```python
 def child_handler(event: SomeOtherEvent):
     return 'xzy123'
@@ -205,12 +228,12 @@ Automatically track event relationships and causality tree:
 ```python
 async def parent_handler(event: BaseEvent):
     # handlers can emit more events to be processed asynchronously after this handler completes
-    child_event_async = bus.dispatch(ChildEvent())
+    child_event_async = event.event_bus.dispatch(ChildEvent())   # equivalent to bus.dispatch(...)
     assert child_event_async.status != 'completed'
     # ChildEvent handlers will run after parent_handler exits
 
     # or you can dispatch an event and block until it finishes processing by awaiting the event
-    # this recursively waits for all handlers, including if event is forwarded to other busses
+    # this recursively waits for all handlers, including if event is forwarded to other buses
     # (note: awaiting an event from inside a handler jumps the FIFO queue and will process it immediately, before any other pending events)
     child_event_sync = await bus.dispatch(ChildEvent())
     # ChildEvent handlers run immediately
@@ -222,7 +245,7 @@ async def parent_handler(event: BaseEvent):
 
 parent_event = bus.dispatch(ParentEvent())
 print(parent_event.event_children)           # show all the child events emitted during handling of an event
-print(bus._log_tree())                       # print a nice pretty tree view of the entire event hierarchy
+print(bus.log_tree())                        # print a nice pretty tree view of the entire event hierarchy
 ```
 
 <img width="1145" alt="image" src="https://github.com/user-attachments/assets/f94684a6-7694-4066-b948-46925f47b56c" />
@@ -393,6 +416,7 @@ class BaseEvent(BaseModel):
 - `event_started_at`: `datetime` When first handler started processing
 - `event_completed_at`: `datetime` When all handlers completed processing
 - `event_children`: `list[BaseEvent]` Get any child events emitted during handling of this event
+- `event_bus`: `EventBus` Shortcut to get the bus currently processing this event
 
 #### `BaseEvent` Methods
 
@@ -450,6 +474,21 @@ Utility method helper to merge all raw result values that are `list`s into a sin
 ```python
 results = await event.event_results_flat_list()
 # ['item1', 'item2', 'item3']
+```
+
+##### `event_bus` (property)
+
+Shortcut to get the `EventBus` that is currently processing this event. Can be used to avoid having to pass an `EventBus` instance to your handlers.
+
+```python
+bus = EventBus()
+
+async def some_handler(event: MyEvent):
+    # You can always dispatch directly to any bus you have a reference to
+    child_event = bus.dispatch(ChildEvent())
+    
+    # OR use the event.event_bus shortcut to get the current bus:
+    child_event = await event.event_bus.dispatch(ChildEvent())
 ```
 
 

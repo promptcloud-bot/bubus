@@ -256,6 +256,87 @@ class TestHandlerRegistration:
         # Check both were registered
         assert len(bus.handlers['TestEvent']) == 2
 
+    async def test_class_and_instance_method_handlers(self, eventbus):
+        """Test using class and instance methods as handlers"""
+        results = []
+
+        class EventProcessor:
+            def __init__(self, name: str, value: int):
+                self.name = name
+                self.value = value
+
+            def sync_method_handler(self, event: UserActionEvent) -> dict:
+                """Sync instance method handler"""
+                results.append(f'{self.name}_sync')
+                return {'processor': self.name, 'value': self.value, 'action': event.action}
+
+            async def async_method_handler(self, event: UserActionEvent) -> dict:
+                """Async instance method handler"""
+                await asyncio.sleep(0.01)  # Simulate some async work
+                results.append(f'{self.name}_async')
+                return {'processor': self.name, 'value': self.value * 2, 'action': event.action}
+
+            @classmethod
+            def class_method_handler(cls, event: UserActionEvent) -> str:
+                """Class method handler"""
+                results.append('classmethod')
+                return f'Handled by {cls.__name__}'
+
+            @staticmethod
+            def static_method_handler(event: UserActionEvent) -> str:
+                """Static method handler"""
+                results.append('staticmethod')
+                return 'Handled by static method'
+
+        # Create instances
+        processor1 = EventProcessor('Processor1', 10)
+        processor2 = EventProcessor('Processor2', 20)
+
+        # Register instance methods
+        eventbus.on('UserActionEvent', processor1.sync_method_handler)
+        eventbus.on('UserActionEvent', processor1.async_method_handler)
+        eventbus.on('UserActionEvent', processor2.sync_method_handler)
+
+        # Register class and static methods
+        eventbus.on('UserActionEvent', EventProcessor.class_method_handler)
+        eventbus.on('UserActionEvent', EventProcessor.static_method_handler)
+
+        # Dispatch event
+        event = UserActionEvent(action='test_methods', user_id='u123')
+        completed_event = await eventbus.dispatch(event)
+
+        # Verify all handlers were called
+        assert len(results) == 5
+        assert 'Processor1_sync' in results
+        assert 'Processor1_async' in results
+        assert 'Processor2_sync' in results
+        assert 'classmethod' in results
+        assert 'staticmethod' in results
+
+        # Verify results contain expected data
+        results_list = await completed_event.event_results_list()
+
+        # Find processor1 sync result
+        p1_sync_result = next(
+            r for r in results_list if isinstance(r, dict) and r.get('processor') == 'Processor1' and r.get('value') == 10
+        )
+        assert p1_sync_result['action'] == 'test_methods'
+
+        # Find processor1 async result (value doubled)
+        p1_async_result = next(
+            r for r in results_list if isinstance(r, dict) and r.get('processor') == 'Processor1' and r.get('value') == 20
+        )
+        assert p1_async_result['action'] == 'test_methods'
+
+        # Find processor2 sync result
+        p2_sync_result = next(r for r in results_list if isinstance(r, dict) and r.get('processor') == 'Processor2')
+        assert p2_sync_result['value'] == 20
+        assert p2_sync_result['action'] == 'test_methods'
+
+        # Verify class and static method results
+        assert 'Handled by EventProcessor' in results_list
+        assert 'Handled by static method' in results_list
+
 
 class TestFIFOOrdering:
     """Test FIFO event processing"""
