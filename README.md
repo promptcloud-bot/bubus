@@ -532,6 +532,104 @@ handler_result = event.event_results['handler_id']
 value = await handler_result  # Returns result or raises an exception if handler hits an error
 ```
 
+## Extras
+
+### `@retry` Decorator
+
+The `@retry` decorator provides automatic retry functionality with built-in concurrency control for event handlers. This is particularly useful when handlers interact with external services that may temporarily fail.
+
+```python
+from bubus import EventBus, BaseEvent
+from bubus.helpers import retry
+
+bus = EventBus()
+
+class FetchDataEvent(BaseEvent):
+    url: str
+
+@retry(
+    wait=2,                     # Wait 2 seconds between retries
+    retries=3,                  # Retry up to 3 times after initial failure
+    timeout=5,                  # Each attempt times out after 5 seconds
+    semaphore_limit=5,          # Max 5 concurrent executions
+    backoff_factor=1.5,         # Exponential backoff: 2s, 3s, 4.5s
+    retry_on=(TimeoutError, ConnectionError)  # Only retry on specific exceptions
+)
+async def fetch_with_retry(event: FetchDataEvent):
+    # This handler will automatically retry on network failures
+    async with aiohttp.ClientSession() as session:
+        async with session.get(event.url) as response:
+            return await response.json()
+
+bus.on(FetchDataEvent, fetch_with_retry)
+```
+
+#### Retry Parameters
+
+- **`wait`**: Base seconds to wait between retries (default: 3)
+- **`retries`**: Number of retry attempts after initial failure (default: 3)
+- **`timeout`**: Per-attempt timeout in seconds (default: 5)
+- **`retry_on`**: Tuple of exception types to retry on (default: None = retry all)
+- **`backoff_factor`**: Multiplier for wait time after each retry (default: 1.0)
+
+#### Semaphore Options
+
+Control concurrency with built-in semaphore support:
+
+```python
+# Global semaphore - all calls share one limit
+@retry(semaphore_limit=3, semaphore_scope='global')
+async def global_limited_handler(event): ...
+
+# Per-class semaphore - all instances of a class share one limit
+class MyService:
+    @retry(semaphore_limit=2, semaphore_scope='class')
+    async def class_limited_handler(self, event): ...
+
+# Per-instance semaphore - each instance gets its own limit
+class MyService:
+    @retry(semaphore_limit=1, semaphore_scope='self')
+    async def instance_limited_handler(self, event): ...
+
+# Cross-process semaphore - all processes share one limit
+@retry(semaphore_limit=5, semaphore_scope='multiprocess')
+async def process_limited_handler(event): ...
+```
+
+#### Advanced Example
+
+```python
+import logging
+
+# Configure logging to see retry attempts
+logging.basicConfig(level=logging.INFO)
+
+class DatabaseEvent(BaseEvent):
+    query: str
+
+class DatabaseService:
+    @retry(
+        wait=1,
+        retries=5,
+        timeout=10,
+        semaphore_limit=10,          # Max 10 concurrent DB operations
+        semaphore_scope='class',     # Shared across all instances
+        semaphore_timeout=30,        # Wait up to 30s for semaphore
+        semaphore_lax=False,         # Fail if can't acquire semaphore
+        backoff_factor=2.0,          # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+        retry_on=(ConnectionError, TimeoutError)
+    )
+    async def execute_query(self, event: DatabaseEvent):
+        # Automatically retries on connection failures
+        # Limited to 10 concurrent operations across all instances
+        result = await self.db.execute(event.query)
+        return result
+
+# Register the handler
+db_service = DatabaseService()
+bus.on(DatabaseEvent, db_service.execute_query)
+```
+
 <br/>
 
 ---
