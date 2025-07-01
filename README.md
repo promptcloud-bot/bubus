@@ -153,18 +153,17 @@ print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of buses th
 Collect and aggregate results from multiple handlers:
 
 ```python
-async def config_handler_1(event):
+async def load_user_config(event):
     return {"debug": True, "port": 8080}
 
-async def config_handler_2(event):
+async def load_system_config(event):
     return {"debug": False, "timeout": 30}
 
-bus.on('GetConfig', config_handler_1)
-bus.on('GetConfig', config_handler_2)
+bus.on('GetConfig', load_user_config)
+bus.on('GetConfig', load_system_config)
 
-event = await bus.dispatch(BaseEvent(event_type='GetConfig'))
-
-# Merge all dict results
+# Get a merger of all dict results
+event = await bus.dispatch(GetConfig())
 config = await event.event_results_flat_dict()
 # {'debug': False, 'port': 8080, 'timeout': 30}
 
