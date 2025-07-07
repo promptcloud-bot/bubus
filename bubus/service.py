@@ -236,7 +236,12 @@ class EventBus:
     _on_idle: asyncio.Event | None = None
 
     def __init__(
-        self, name: PythonIdentifierStr | None = None, wal_path: Path | str | None = None, parallel_handlers: bool = False
+        self, 
+        name: PythonIdentifierStr | None = None, 
+        wal_path: Path | str | None = None, 
+        parallel_handlers: bool = False,
+        max_history_size: int | None = None,
+        history_cleanup_threshold_seconds: float | None = None
     ):
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
@@ -258,6 +263,10 @@ class EventBus:
         self.parallel_handlers = parallel_handlers
         self.wal_path = Path(wal_path) if wal_path else None
         self._on_idle = None
+        
+        # Memory leak prevention settings
+        self.max_history_size = max_history_size
+        self.history_cleanup_threshold_seconds = history_cleanup_threshold_seconds
 
         # Register this instance
         EventBus.all_instances.add(self)
@@ -754,6 +763,10 @@ class EventBus:
 
         # Mark event as complete if all handlers are done
         event.event_mark_complete_if_all_handlers_completed()
+        
+        # Clean up old events to prevent memory leaks
+        if self.max_history_size or self.history_cleanup_threshold_seconds:
+            self.cleanup_event_history()
 
     def _get_applicable_handlers(self, event: BaseEvent) -> dict[str, EventHandler]:
         """Get all handlers that should process the given event, filtering out those that would create loops"""
@@ -1034,6 +1047,76 @@ class EventBus:
                 await f.write(event_json + '\n')
         except Exception as e:
             logger.error(f'❌ {self} Failed to save event {event.event_id} to WAL file: {type(e).__name__} {e}\n{event}')
+
+    def cleanup_old_events(self) -> int:
+        """
+        Clean up old completed events from event_history to prevent memory leaks.
+        
+        Returns:
+            Number of events removed from history
+        """
+        if not self.history_cleanup_threshold_seconds:
+            return 0
+            
+        import time
+        current_time = time.time()
+        events_to_remove: list[str] = []
+        
+        for event_id, event in self.event_history.items():
+            if event.event_completed_at:
+                # Calculate age of completed event using wall clock time
+                event_created_time = event.event_created_at.timestamp()
+                age_seconds = current_time - event_created_time
+                if age_seconds > self.history_cleanup_threshold_seconds:
+                    events_to_remove.append(event_id)
+        
+        # Remove old events
+        for event_id in events_to_remove:
+            del self.event_history[event_id]
+            
+        if events_to_remove:
+            logger.debug(f'🧹 {self} Cleaned up {len(events_to_remove)} old events from history')
+            
+        return len(events_to_remove)
+    
+    def cleanup_excess_events(self) -> int:
+        """
+        Clean up excess events from event_history based on max_history_size.
+        
+        Returns:
+            Number of events removed from history
+        """
+        if not self.max_history_size or len(self.event_history) <= self.max_history_size:
+            return 0
+            
+        # Sort events by creation time (oldest first)
+        sorted_events = sorted(
+            self.event_history.items(),
+            key=lambda x: x[1].event_created_at.timestamp()
+        )
+        
+        # Remove oldest events to get down to max_history_size
+        events_to_remove = sorted_events[:-self.max_history_size]
+        event_ids_to_remove = [event_id for event_id, _ in events_to_remove]
+        
+        for event_id in event_ids_to_remove:
+            del self.event_history[event_id]
+            
+        if event_ids_to_remove:
+            logger.debug(f'🧹 {self} Cleaned up {len(event_ids_to_remove)} excess events from history')
+            
+        return len(event_ids_to_remove)
+    
+    def cleanup_event_history(self) -> int:
+        """
+        Clean up event history using both time-based and size-based cleanup.
+        
+        Returns:
+            Total number of events removed from history
+        """
+        removed_by_time = self.cleanup_old_events()
+        removed_by_size = self.cleanup_excess_events()
+        return removed_by_time + removed_by_size
 
     def log_tree(self) -> None:
         """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
