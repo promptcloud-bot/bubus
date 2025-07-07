@@ -65,7 +65,7 @@ class MockAgent:
 @pytest.fixture
 async def eventbus():
     """Create an event bus for testing"""
-    bus = EventBus()
+    bus = EventBus(max_history_size=10000)  # Increase history limit for tests
     yield bus
     await bus.stop()
 
@@ -524,16 +524,25 @@ class TestEdgeCases:
 
     async def test_concurrent_emit_calls(self, eventbus):
         """Test multiple concurrent emit calls"""
-        # Create many events concurrently
-        tasks = []
-        for i in range(100):
-            event = UserActionEvent(action=f'concurrent_{i}', user_id='u1')
-            # Emit returns the event syncresultsonously, but we need to wait for completion
-            emitted_event = eventbus.dispatch(event)
-            tasks.append(emitted_event)
+        # Create many events concurrently, but respect the max_pending_events limit
+        # We'll create them in batches to avoid hitting the limit
+        total_events = 100
+        batch_size = 50  # Stay well under the default limit of 100
+        all_tasks = []
 
-        # Wait for all events to complete
-        await asyncio.gather(*tasks)
+        for batch_start in range(0, total_events, batch_size):
+            batch_end = min(batch_start + batch_size, total_events)
+            batch_tasks = []
+
+            for i in range(batch_start, batch_end):
+                event = UserActionEvent(action=f'concurrent_{i}', user_id='u1')
+                # Emit returns the event syncresultsonously, but we need to wait for completion
+                emitted_event = eventbus.dispatch(event)
+                batch_tasks.append(emitted_event)
+
+            # Wait for this batch to complete before starting the next
+            await asyncio.gather(*batch_tasks)
+            all_tasks.extend(batch_tasks)
 
         # Wait for processing
         await eventbus.wait_until_idle()

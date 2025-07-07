@@ -204,6 +204,39 @@ await bus.dispatch(MainEvent()).event_result()
 # result from awaiting child event: xyz123
 ```
 
+### 🧹 Memory Management
+
+EventBus includes automatic memory management to prevent unbounded growth in long-running applications:
+
+```python
+# Create a bus with memory limits (default: 50 events)
+bus = EventBus(max_history_size=100)  # Keep max 100 events in history
+
+# Or disable memory limits for unlimited history
+bus = EventBus(max_history_size=None)
+```
+
+**Automatic Cleanup:**
+- When `max_history_size` is set, EventBus automatically removes old events when the limit is exceeded
+- Completed events are removed first (oldest first), then started events, then pending events
+- This ensures active events are preserved while cleaning up old completed events
+
+**Manual Memory Management:**
+```python
+# For request-scoped buses (e.g. web servers), clear all memory after each request
+try:
+    event_service = EventService()  # Creates internal EventBus
+    await event_service.process_request()
+finally:
+    # Clear all event history and remove from global tracking
+    await event_service.eventbus.stop(clear=True)
+```
+
+**Memory Monitoring:**
+- EventBus automatically monitors total memory usage across all instances
+- Warnings are logged when total memory exceeds 50MB
+- Use `bus.stop(clear=True)` to completely free memory for unused buses
+
 ### ⛓️ Parallel Handler Execution
 
 Enable parallel processing of handlers for better performance.  
@@ -304,7 +337,8 @@ The main event bus class that manages event processing and handler execution.
 EventBus(
     name: str | None = None,
     wal_path: Path | str | None = None,
-    parallel_handlers: bool = False
+    parallel_handlers: bool = False,
+    max_history_size: int | None = 50
 )
 ```
 
@@ -313,15 +347,17 @@ EventBus(
 - `name`: Optional unique name for the bus (auto-generated if not provided)
 - `wal_path`: Path for write-ahead logging of events to a `jsonl` file (optional)
 - `parallel_handlers`: If `True`, handlers run concurrently for each event, otherwise serially if `False` (the default)
+- `max_history_size`: Maximum number of events to keep in history (default: 50, None = unlimited)
 
 #### `EventBus` Properties
 
 - `name`: The bus identifier
 - `id`: Unique UUID7 for this bus instance
-- `event_history`: Dict of all events the bus has seen by event_id
+- `event_history`: Dict of all events the bus has seen by event_id (limited by `max_history_size`)
 - `events_pending`: List of events waiting to be processed
 - `events_started`: List of events currently being processed
 - `events_completed`: List of completed events
+- `all_instances`: Class-level WeakSet tracking all active EventBus instances (for memory monitoring)
 
 
 #### `EventBus` Methods
@@ -344,6 +380,8 @@ Enqueue an event for processing and return the pending `Event` immediately (sync
 event = bus.dispatch(MyEvent(data="test"))
 result = await event  # await the pending Event to get the completed Event
 ```
+
+**Note:** When `max_history_size` is set, EventBus enforces a hard limit of 100 pending events (queue + processing) to prevent runaway memory usage. Dispatch will raise `RuntimeError` if this limit is exceeded.
 
 ##### `expect(event_type: str | Type[BaseEvent], timeout: float | None=None, predicate: Callable[[BaseEvent], bool]=None) -> BaseEvent`
 
@@ -370,13 +408,14 @@ await bus.wait_until_idle()             # wait indefinitely until EventBus has f
 await bus.wait_until_idle(timeout=5.0)  # wait up to 5 seconds
 ```
 
-##### `stop(timeout: float | None=None)`
+##### `stop(timeout: float | None=None, clear: bool=False)`
 
-Stop the event bus, optionally waiting for pending events.
+Stop the event bus, optionally waiting for pending events and clearing memory.
 
 ```python
 await bus.stop(timeout=1.0)  # Graceful stop, wait up to 1sec for pending and active events to finish processing
 await bus.stop()             # Immediate shutdown, aborts all pending and actively processing events
+await bus.stop(clear=True)   # Stop and clear all event history and handlers to free memory
 ```
 
 ---
@@ -569,7 +608,7 @@ bus.on(FetchDataEvent, fetch_with_retry)
 
 #### Retry Parameters
 
-- **`timeout`**: Maximum amount of time function is allowd to take per attempt, in seconds (default: 5)
+- **`timeout`**: Maximum amount of time function is allowed to take per attempt, in seconds (default: 5)
 - **`retries`**: Number of additional retry attempts if function raises an exception (default: 3)
 - **`retry_on`**: Tuple of exception types to retry on (default: `None` = retry on any `Exception`)
 - **`wait`**: Base seconds to wait between retries (default: 3)
@@ -577,7 +616,7 @@ bus.on(FetchDataEvent, fetch_with_retry)
 - **`semaphore_limit`**: Maximum number of concurrent calls that can run at the same time
 - **`semaphore_scope`**: Scope for the semaphore: `class`, `self`, `global`, or `multiprocess`
 - **`semaphore_timeout`**: Maximum time to wait for a semaphore slot before proceeding or failing
-- **`semaphore_lax`**: Continue anyway if semaphore fails to be aquired in within the given time
+- **`semaphore_lax`**: Continue anyway if semaphore fails to be acquired in within the given time
 - **`semaphore_name`**: Unique semaphore name to allow sharing a semaphore between functions
 
 #### Semaphore Options

@@ -11,8 +11,10 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Literal, TypeVar, overload
 
-import anyio
-from uuid_extensions import uuid7str
+import anyio  # pyright: ignore[reportMissingImports]
+from uuid_extensions import uuid7str  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
+
+uuid7str: Callable[[], str] = uuid7str  # pyright: ignore
 
 from bubus.models import (
     BUBUS_LOG_LEVEL,
@@ -236,12 +238,11 @@ class EventBus:
     _on_idle: asyncio.Event | None = None
 
     def __init__(
-        self, 
-        name: PythonIdentifierStr | None = None, 
-        wal_path: Path | str | None = None, 
+        self,
+        name: PythonIdentifierStr | None = None,
+        wal_path: Path | str | None = None,
         parallel_handlers: bool = False,
-        max_history_size: int | None = None,
-        history_cleanup_threshold_seconds: float | None = None
+        max_history_size: int | None = 50,  # Keep only 50 events in history
     ):
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
@@ -263,10 +264,9 @@ class EventBus:
         self.parallel_handlers = parallel_handlers
         self.wal_path = Path(wal_path) if wal_path else None
         self._on_idle = None
-        
+
         # Memory leak prevention settings
         self.max_history_size = max_history_size
-        self.history_cleanup_threshold_seconds = history_cleanup_threshold_seconds
 
         # Register this instance
         EventBus.all_instances.add(self)
@@ -286,6 +286,13 @@ class EventBus:
 
         # Our custom queue handles cleanup properly in shutdown()
         # No need for manual cleanup here
+
+        # Check total memory usage across all EventBus instances
+        try:
+            self._check_total_memory_usage()
+        except Exception:
+            # Don't let memory check errors prevent cleanup
+            pass
 
     def __str__(self) -> str:
         icon = '🟢' if self._is_running else '🔴'
@@ -377,16 +384,20 @@ class EventBus:
         )
 
         # Determine event key
+        event_key: str
         if event_pattern == '*':
             event_key = '*'
         elif isinstance(event_pattern, type) and issubclass(event_pattern, BaseEvent):  # pyright: ignore[reportUnnecessaryIsInstance]
-            event_key = event_pattern.__name__
+            event_key = event_pattern.__name__  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         else:
             event_key = str(event_pattern)
 
+        # Ensure event_key is definitely a string at this point
+        assert isinstance(event_key, str)
+
         # Check for duplicate handler names
         new_handler_name = get_handler_name(handler)
-        existing_registered_handlers = [get_handler_name(h) for h in self.handlers.get(event_key, [])]
+        existing_registered_handlers = [get_handler_name(h) for h in self.handlers.get(event_key, [])]  # pyright: ignore[reportUnknownArgumentType]
 
         if new_handler_name in existing_registered_handlers:
             warnings.warn(
@@ -451,6 +462,20 @@ class EventBus:
             f'Event.event_path must be a list of valid EventBus names, got: {event.event_path}'
         )
 
+        # Check hard limit on total pending events (queue + in-progress)
+        # Only enforce if we have memory limits set
+        if self.max_history_size is not None:
+            queue_size = self.event_queue.qsize() if self.event_queue else 0
+            pending_in_history = sum(1 for e in self.event_history.values() if e.event_status in ('pending', 'started'))
+            total_pending = queue_size + pending_in_history
+
+            if total_pending >= 100:
+                raise RuntimeError(
+                    f'EventBus at capacity: {total_pending} pending events (100 max). '
+                    f'Queue: {queue_size}, Processing: {pending_in_history}. '
+                    f'Cannot accept new events until some complete.'
+                )
+
         # Add event to history
         self.event_history[event.event_id] = event
         # logger.debug(f'📝 {self}.dispatch() adding event {event.event_id} to history')
@@ -467,7 +492,7 @@ class EventBus:
                 )
             except asyncio.QueueFull:
                 logger.error(
-                    f'⚠️ {self} Event queue is full! Dropping event and aborting {event.event_type}:\n{event.model_dump_json()}'
+                    f'⚠️ {self} Event queue is full! Dropping event and aborting {event.event_type}:\n{event.model_dump_json()}'  # pyright: ignore[reportUnknownMemberType]
                 )
                 raise  # could also block indefinitely until queue has space, but dont drop silently or delete events
         else:
@@ -476,6 +501,10 @@ class EventBus:
         # Note: We do NOT pre-create EventResults here anymore.
         # EventResults are created only when handlers actually start executing.
         # This avoids "orphaned" pending results for handlers that get filtered out later.
+
+        # Clean up if over the limit
+        if self.max_history_size and len(self.event_history) > self.max_history_size:
+            self.cleanup_event_history()
 
         return event
 
@@ -532,7 +561,7 @@ class EventBus:
                 return await future
         finally:
             # Clean up handler
-            event_key = event_type.__name__ if isinstance(event_type, type) else str(event_type)
+            event_key: str = event_type.__name__ if isinstance(event_type, type) else str(event_type)  # pyright: ignore[reportUnknownMemberType, reportPartialTypeErrors]
             if event_key in self.handlers and notify_expect_handler in self.handlers[event_key]:
                 self.handlers[event_key].remove(notify_expect_handler)
 
@@ -581,7 +610,9 @@ class EventBus:
 
                 # Create async objects if needed
                 if self.event_queue is None:
-                    self.event_queue = CleanShutdownQueue[BaseEvent]()
+                    # Set queue size based on whether we have limits
+                    queue_size = 50 if self.max_history_size is not None else 0  # 0 = unlimited
+                    self.event_queue = CleanShutdownQueue[BaseEvent](maxsize=queue_size)
                     self._on_idle = asyncio.Event()
                     self._on_idle.clear()  # Start in a busy state unless we confirm queue is empty by running _run_loop_step() at least once
 
@@ -592,8 +623,13 @@ class EventBus:
                 # No event loop - will start when one becomes available
                 pass
 
-    async def stop(self, timeout: float | None = None) -> None:
-        """Stop the event bus, optionally waiting for events to complete"""
+    async def stop(self, timeout: float | None = None, clear: bool = False) -> None:
+        """Stop the event bus, optionally waiting for events to complete
+
+        Args:
+            timeout: Maximum time to wait for pending events to complete
+            clear: If True, clear event history and remove from global tracking to free memory
+        """
         if not self._is_running:
             return
 
@@ -635,7 +671,23 @@ class EventBus:
         if self._on_idle:
             self._on_idle.set()
 
+        # Clear event history and handlers if requested (for memory cleanup)
+        if clear:
+            self.event_history.clear()
+            self.handlers.clear()
+            # Remove from global instance tracking
+            if self in EventBus.all_instances:
+                EventBus.all_instances.discard(self)
+            logger.debug(f'🧹 {self} cleared event history and removed from global tracking')
+
         logger.debug(f'🛑 {self} shut down gracefully' if timeout is not None else f'🛑 {self} killed')
+
+        # Check total memory usage across all instances
+        try:
+            self._check_total_memory_usage()
+        except Exception:
+            # Don't let memory check errors prevent shutdown
+            pass
 
     async def wait_until_idle(self, timeout: float | None = None) -> None:
         """Wait until the event bus is idle (no events being processed and all handlers completed)"""
@@ -763,9 +815,9 @@ class EventBus:
 
         # Mark event as complete if all handlers are done
         event.event_mark_complete_if_all_handlers_completed()
-        
-        # Clean up old events to prevent memory leaks
-        if self.max_history_size or self.history_cleanup_threshold_seconds:
+
+        # Clean up excess events to prevent memory leaks
+        if self.max_history_size:
             self.cleanup_event_history()
 
     def _get_applicable_handlers(self, event: BaseEvent) -> dict[str, EventHandler]:
@@ -817,7 +869,7 @@ class EventBus:
             for handler_id, (task, handler) in handler_tasks.items():
                 try:
                     await task
-                except Exception as e:
+                except Exception:
                     # Error already logged and recorded in _execute_sync_or_async_handler
                     pass
         else:
@@ -893,7 +945,7 @@ class EventBus:
                 raise ValueError(f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}')
 
             logger.debug(
-                f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__} {result_value}'
+                f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__} {result_value}'  # pyright: ignore[reportUnknownMemberType]
             )
             # Cancel the monitor task since handler completed successfully
             monitor_task.cancel()
@@ -1041,85 +1093,169 @@ class EventBus:
             return None
 
         try:
-            event_json = event.model_dump_json()
+            event_json = event.model_dump_json()  # pyright: ignore[reportUnknownMemberType]
             self.wal_path.parent.mkdir(parents=True, exist_ok=True)
-            async with await anyio.open_file(self.wal_path, 'a', encoding='utf-8') as f:
-                await f.write(event_json + '\n')
+            async with await anyio.open_file(self.wal_path, 'a', encoding='utf-8') as f:  # pyright: ignore[reportUnknownMemberType]
+                await f.write(event_json + '\n')  # pyright: ignore[reportUnknownMemberType]
         except Exception as e:
             logger.error(f'❌ {self} Failed to save event {event.event_id} to WAL file: {type(e).__name__} {e}\n{event}')
 
-    def cleanup_old_events(self) -> int:
-        """
-        Clean up old completed events from event_history to prevent memory leaks.
-        
-        Returns:
-            Number of events removed from history
-        """
-        if not self.history_cleanup_threshold_seconds:
-            return 0
-            
-        import time
-        current_time = time.time()
-        events_to_remove: list[str] = []
-        
-        for event_id, event in self.event_history.items():
-            if event.event_completed_at:
-                # Calculate age of completed event using wall clock time
-                event_created_time = event.event_created_at.timestamp()
-                age_seconds = current_time - event_created_time
-                if age_seconds > self.history_cleanup_threshold_seconds:
-                    events_to_remove.append(event_id)
-        
-        # Remove old events
-        for event_id in events_to_remove:
-            del self.event_history[event_id]
-            
-        if events_to_remove:
-            logger.debug(f'🧹 {self} Cleaned up {len(events_to_remove)} old events from history')
-            
-        return len(events_to_remove)
-    
     def cleanup_excess_events(self) -> int:
         """
         Clean up excess events from event_history based on max_history_size.
-        
+
         Returns:
             Number of events removed from history
         """
         if not self.max_history_size or len(self.event_history) <= self.max_history_size:
             return 0
-            
+
         # Sort events by creation time (oldest first)
-        sorted_events = sorted(
-            self.event_history.items(),
-            key=lambda x: x[1].event_created_at.timestamp()
-        )
-        
+        sorted_events = sorted(self.event_history.items(), key=lambda x: x[1].event_created_at.timestamp())
+
         # Remove oldest events to get down to max_history_size
-        events_to_remove = sorted_events[:-self.max_history_size]
+        events_to_remove = sorted_events[: -self.max_history_size]
         event_ids_to_remove = [event_id for event_id, _ in events_to_remove]
-        
+
         for event_id in event_ids_to_remove:
             del self.event_history[event_id]
-            
+
         if event_ids_to_remove:
             logger.debug(f'🧹 {self} Cleaned up {len(event_ids_to_remove)} excess events from history')
-            
+
         return len(event_ids_to_remove)
-    
+
     def cleanup_event_history(self) -> int:
         """
-        Clean up event history using both time-based and size-based cleanup.
-        
+        Clean up event history to maintain max_history_size limit.
+        Prioritizes keeping pending/started events over completed ones.
+
         Returns:
             Total number of events removed from history
         """
-        removed_by_time = self.cleanup_old_events()
-        removed_by_size = self.cleanup_excess_events()
-        return removed_by_time + removed_by_size
+        if not self.max_history_size or len(self.event_history) <= self.max_history_size:
+            return 0
+
+        # Separate events by status
+        pending_events: list[tuple[str, BaseEvent]] = []
+        started_events: list[tuple[str, BaseEvent]] = []
+        completed_events: list[tuple[str, BaseEvent]] = []
+
+        for event_id, event in self.event_history.items():
+            if event.event_status == 'pending':
+                pending_events.append((event_id, event))
+            elif event.event_status == 'started':
+                started_events.append((event_id, event))
+            else:  # completed or error
+                completed_events.append((event_id, event))
+
+        # Sort completed events by creation time (oldest first)
+        completed_events.sort(key=lambda x: x[1].event_created_at.timestamp())  # pyright: ignore[reportUnknownMemberType, reportUnknownLambdaType]
+
+        # Calculate how many to remove
+        total_events = len(self.event_history)
+        events_to_remove_count = total_events - self.max_history_size
+
+        events_to_remove: list[str] = []
+
+        # First remove completed events (oldest first)
+        if completed_events and events_to_remove_count > 0:
+            remove_from_completed = min(len(completed_events), events_to_remove_count)
+            events_to_remove.extend([event_id for event_id, _ in completed_events[:remove_from_completed]])
+            events_to_remove_count -= remove_from_completed
+
+        # If still need to remove more, remove oldest started events
+        if events_to_remove_count > 0 and started_events:
+            started_events.sort(key=lambda x: x[1].event_created_at.timestamp())  # pyright: ignore[reportUnknownMemberType, reportUnknownLambdaType]
+            remove_from_started = min(len(started_events), events_to_remove_count)
+            events_to_remove.extend([event_id for event_id, _ in started_events[:remove_from_started]])
+            events_to_remove_count -= remove_from_started
+
+        # If still need to remove more, remove oldest pending events
+        if events_to_remove_count > 0 and pending_events:
+            pending_events.sort(key=lambda x: x[1].event_created_at.timestamp())  # pyright: ignore[reportUnknownMemberType, reportUnknownLambdaType]
+            events_to_remove.extend([event_id for event_id, _ in pending_events[:events_to_remove_count]])
+
+        # Remove the events
+        for event_id in events_to_remove:
+            del self.event_history[event_id]
+
+        if events_to_remove:
+            logger.debug(
+                f'🧹 {self} Cleaned up {len(events_to_remove)} events from history (kept {len(self.event_history)}/{self.max_history_size})'
+            )
+
+        return len(events_to_remove)
 
     def log_tree(self) -> None:
         """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
         from bubus.logging import log_eventbus_tree
 
         log_eventbus_tree(self)
+
+    def _check_total_memory_usage(self) -> None:
+        """Check total memory usage across all EventBus instances and warn if >50MB"""
+        import sys
+
+        total_bytes = 0
+        bus_details: list[tuple[str, int, int, int]] = []
+
+        # Iterate through all EventBus instances
+        for bus in EventBus.all_instances:
+            try:
+                bus_bytes = 0
+
+                # Count events in history
+                for event in bus.event_history.values():
+                    bus_bytes += sys.getsizeof(event)
+                    # Also count the event's data
+                    if hasattr(event, '__dict__'):
+                        for attr_value in event.__dict__.values():
+                            if isinstance(attr_value, (str, bytes, list, dict)):
+                                bus_bytes += sys.getsizeof(attr_value)  # pyright: ignore[reportUnknownArgumentType]
+
+                # Count events in queue
+                if bus.event_queue:
+                    # Access internal queue storage
+                    if hasattr(bus.event_queue, '_queue'):
+                        queue: deque[BaseEvent] = bus.event_queue._queue  # type: ignore[attr-defined]
+                        for event in queue:  # pyright: ignore[reportUnknownVariableType]
+                            bus_bytes += sys.getsizeof(event)  # pyright: ignore[reportUnknownArgumentType]
+                            if hasattr(event, '__dict__'):  # pyright: ignore[reportUnknownArgumentType]
+                                for attr_value in event.__dict__.values():  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                                    if isinstance(attr_value, (str, bytes, list, dict)):
+                                        bus_bytes += sys.getsizeof(attr_value)  # pyright: ignore[reportUnknownArgumentType]
+
+                total_bytes += bus_bytes
+                bus_details.append(
+                    (bus.name, bus_bytes, len(bus.event_history), bus.event_queue.qsize() if bus.event_queue else 0)
+                )
+            except Exception:
+                # Skip buses that can't be measured
+                continue
+
+        total_mb = total_bytes / (1024 * 1024)
+
+        if total_mb > 50:
+            # Build detailed breakdown
+            details: list[str] = []
+            for name, bytes_used, history_size, queue_size in sorted(bus_details, key=lambda x: x[1], reverse=True):  # pyright: ignore[reportUnknownLambdaType]
+                mb = bytes_used / (1024 * 1024)
+                if mb > 0.1:  # Only show buses using >0.1MB
+                    details.append(f'  - {name}: {mb:.1f}MB (history={history_size}, queue={queue_size})')
+
+            warning_msg = (
+                f'\n⚠️  WARNING: Total EventBus memory usage is {total_mb:.1f}MB (>50MB limit)\n'
+                f'Active EventBus instances: {len(EventBus.all_instances)}\n'
+            )
+            if details:
+                warning_msg += 'Memory breakdown:\n' + '\n'.join(details[:5])  # Show top 5
+                if len(details) > 5:
+                    warning_msg += f'\n  ... and {len(details) - 5} more'
+
+            warning_msg += '\nConsider:\n'
+            warning_msg += '  - Reducing max_history_size\n'
+            warning_msg += '  - Clearing completed EventBus instances with stop(clear=True)\n'
+            warning_msg += '  - Reducing event payload sizes\n'
+
+            logger.warning(warning_msg)
