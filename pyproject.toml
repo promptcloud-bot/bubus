@@ -52,6 +52,8 @@ skip-magic-trailing-comma = false
 typeCheckingMode = "strict"
 reportMissingImports = "error"
 reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
 
 [tool.hatch.build]
 include = [
