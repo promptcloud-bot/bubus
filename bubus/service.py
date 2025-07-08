@@ -267,7 +267,7 @@ class EventBus:
         assert self.name.isidentifier(), f'EventBus name must be a unique identifier string, got: {self.name}'
 
         # Force garbage collection to clean up any dead EventBus instances in the WeakSet
-        gc.collect()
+        # gc.collect()  # Commented out - this is expensive and causes 5s delays when creating many EventBus instances
 
         # Check for name uniqueness among existing instances
         for existing_bus in EventBus.all_instances:
