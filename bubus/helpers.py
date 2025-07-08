@@ -10,6 +10,10 @@ from typing import Any, Literal, ParamSpec, TypeVar
 
 import portalocker
 
+# Silence portalocker debug messages
+portalocker_logger = logging.getLogger('portalocker.utils')
+portalocker_logger.setLevel(logging.WARNING)
+
 PSUTIL_AVAILABLE = False
 try:
     import psutil  # type: ignore[import]
@@ -69,7 +73,7 @@ MULTIPROCESS_SEMAPHORE_DIR = Path(tempfile.gettempdir()) / 'browser_use_semaphor
 MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True)
 
 # Global multiprocess semaphore registry
-MULTIPROCESS_SEMAPHORES: dict[str, portalocker.utils.NamedBoundedSemaphore] = {}
+# Multiprocess semaphores are not cached due to internal state issues causing "Already locked" errors
 MULTIPROCESS_SEMAPHORE_LOCK = threading.Lock()
 
 # Global overload detection state
@@ -144,14 +148,14 @@ def _get_or_create_semaphore(
 ) -> Any:
     """Get or create a semaphore based on scope."""
     if semaphore_scope == 'multiprocess':
+        # Don't cache multiprocess semaphores - they have internal state issues
+        # Create a new instance each time to avoid "Already locked" errors
         with MULTIPROCESS_SEMAPHORE_LOCK:
-            if sem_key not in MULTIPROCESS_SEMAPHORES:
-                MULTIPROCESS_SEMAPHORES[sem_key] = portalocker.utils.NamedBoundedSemaphore(
-                    maximum=semaphore_limit,
-                    name=sem_key,
-                    directory=str(MULTIPROCESS_SEMAPHORE_DIR),
-                )
-            return MULTIPROCESS_SEMAPHORES[sem_key]
+            return portalocker.utils.NamedBoundedSemaphore(
+                maximum=semaphore_limit,
+                name=sem_key,
+                directory=str(MULTIPROCESS_SEMAPHORE_DIR),
+            )
     else:
         with GLOBAL_RETRY_SEMAPHORE_LOCK:
             if sem_key not in GLOBAL_RETRY_SEMAPHORES:
@@ -182,30 +186,49 @@ async def _acquire_multiprocess_semaphore(
     semaphore_limit: int,
     timeout: float,
 ) -> tuple[bool, Any]:
-    """Acquire a multiprocess semaphore."""
-    try:
-        # Use a temporary thread to run the blocking operation
-        multiprocess_lock = await asyncio.to_thread(
-            lambda: semaphore.acquire(timeout=sem_timeout, check_interval=0.05, fail_when_locked=False)
-        )
-        if multiprocess_lock:
-            return True, multiprocess_lock
-        else:
-            raise TimeoutError(f'Could not acquire semaphore within {sem_timeout}s')
-    except Exception as e:
-        if 'Could not acquire' in str(e) or isinstance(e, TimeoutError):
-            if not semaphore_lax:
-                raise TimeoutError(
-                    f'Failed to acquire multiprocess semaphore "{sem_key}" within {sem_timeout}s '
-                    f'(limit={semaphore_limit}, timeout={timeout}s per operation)'
-                )
-            logger.warning(
-                f'Failed to acquire multiprocess semaphore "{sem_key}" after {sem_timeout:.1f}s, '
-                f'proceeding without concurrency limit'
+    """Acquire a multiprocess semaphore with retries and exponential backoff."""
+    start_time = time.time()
+    retry_delay = 0.1  # Start with 100ms
+    backoff_factor = 2.0
+    max_single_attempt = 1.0  # Max time for a single acquire attempt
+    
+    while time.time() - start_time < sem_timeout:
+        try:
+            # Calculate remaining time
+            remaining_time = sem_timeout - (time.time() - start_time)
+            if remaining_time <= 0:
+                break
+                
+            # Use minimum of remaining time or max single attempt
+            attempt_timeout = min(remaining_time, max_single_attempt)
+            
+            # Use a temporary thread to run the blocking operation
+            multiprocess_lock = await asyncio.to_thread(
+                lambda: semaphore.acquire(timeout=attempt_timeout, check_interval=0.1, fail_when_locked=False)
             )
-            return False, None
-        else:
-            raise
+            if multiprocess_lock:
+                return True, multiprocess_lock
+            
+            # If we didn't get the lock, wait before retrying
+            if remaining_time > retry_delay:
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * backoff_factor, 1.0)  # Cap at 1 second
+                
+        except Exception as e:
+            if 'Could not acquire' not in str(e) and not isinstance(e, TimeoutError):
+                raise
+    
+    # Timeout reached
+    if not semaphore_lax:
+        raise TimeoutError(
+            f'Failed to acquire multiprocess semaphore "{sem_key}" within {sem_timeout}s '
+            f'(limit={semaphore_limit}, timeout={timeout}s per operation)'
+        )
+    logger.warning(
+        f'Failed to acquire multiprocess semaphore "{sem_key}" after {sem_timeout:.1f}s, '
+        f'proceeding without concurrency limit'
+    )
+    return False, None
 
 
 async def _acquire_asyncio_semaphore(
@@ -264,10 +287,18 @@ async def _execute_with_retries(
                 # Calculate wait time with backoff
                 current_wait = wait * (backoff_factor**attempt)
 
-                logger.warning(
-                    f'{func.__name__} failed (attempt {attempt + 1}/{retries + 1}): '
-                    f'{type(e).__name__}: {e}. Waiting {current_wait:.1f}s before retry...'
-                )
+                # Only log warning on the final retry attempt (second-to-last overall attempt)
+                if attempt == retries - 1:
+                    logger.warning(
+                        f'{func.__name__} failed (attempt {attempt + 1}/{retries + 1}): '
+                        f'{type(e).__name__}: {e}. Waiting {current_wait:.1f}s before retry...'
+                    )
+                # else:
+                #     # For earlier attempts, skip logging to reduce noise
+                #     logger.debug(
+                #         f'{func.__name__} failed (attempt {attempt + 1}/{retries + 1}): '
+                #         f'{type(e).__name__}: {e}. Waiting {current_wait:.1f}s before retry...'
+                #     )
                 await asyncio.sleep(current_wait)
             else:
                 # Final failure
