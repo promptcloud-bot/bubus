@@ -236,6 +236,7 @@ finally:
 - EventBus automatically monitors total memory usage across all instances
 - Warnings are logged when total memory exceeds 50MB
 - Use `bus.stop(clear=True)` to completely free memory for unused buses
+- To avoid memory leaks from big events, the default limits are intentionally kept low. events are normally processed as they come in, and there is rarely a need to keep every event in memory longer after its complete. long-term storage should be accomplished using other mechanisms, like the WAL
 
 ### ⛓️ Parallel Handler Execution
 

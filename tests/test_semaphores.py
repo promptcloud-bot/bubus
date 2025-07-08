@@ -581,7 +581,7 @@ class TestRetryWithEventBus:
 
         # Track handler execution details
         handler_calls: list[tuple[str, float]] = []
-        results: list[Any] = []
+        # results: list[Any] = []  # Unused variable
 
         class TestEvent(BaseEvent):
             """Simple test event."""
@@ -613,7 +613,7 @@ class TestRetryWithEventBus:
         bus.on('TestEvent', retrying_handler)
 
         # Dispatch an event
-        start_time = time.time()
+        # start_time = time.time()  # Unused variable
         event = TestEvent(message='Hello retry!')
         completed_event = await bus.dispatch(event)
 
@@ -726,7 +726,7 @@ class TestRetryWithEventBus:
         bus = EventBus(name='test_timeout_bus')
 
         handler_started = False
-        handler_error = None
+        # handler_error = None  # Unused variable
 
         @retry(
             retries=0,  # No retries

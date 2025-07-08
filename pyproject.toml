@@ -16,7 +16,6 @@ dependencies = [
     "portalocker>=2.7.0",
     "pydantic>=2.11.5",
     "typing-extensions>=4.12.2",
-    "uuid-extensions>=0.0.1",
     "uuid7>=0.1.0",
 ]
 

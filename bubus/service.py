@@ -476,10 +476,6 @@ class EventBus:
                     f'Cannot accept new events until some complete.'
                 )
 
-        # Add event to history
-        self.event_history[event.event_id] = event
-        # logger.debug(f'📝 {self}.dispatch() adding event {event.event_id} to history')
-
         # Auto-start if needed
         self._start()
 
@@ -487,10 +483,13 @@ class EventBus:
         if self.event_queue:
             try:
                 self.event_queue.put_nowait(event)
+                # Only add to history after successfully queuing
+                self.event_history[event.event_id] = event
                 logger.info(
                     f'🗣️ {self}.dispatch({event.event_type}) ➡️ Event#{event.event_id[-8:]}({event.event_status} #{self.event_queue.qsize()})'
                 )
             except asyncio.QueueFull:
+                # Don't add to history if we can't queue it
                 logger.error(
                     f'⚠️ {self} Event queue is full! Dropping event and aborting {event.event_type}:\n{event.model_dump_json()}'  # pyright: ignore[reportUnknownMemberType]
                 )
