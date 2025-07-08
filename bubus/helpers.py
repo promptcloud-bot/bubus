@@ -191,33 +191,33 @@ async def _acquire_multiprocess_semaphore(
     retry_delay = 0.1  # Start with 100ms
     backoff_factor = 2.0
     max_single_attempt = 1.0  # Max time for a single acquire attempt
-    
+
     while time.time() - start_time < sem_timeout:
         try:
             # Calculate remaining time
             remaining_time = sem_timeout - (time.time() - start_time)
             if remaining_time <= 0:
                 break
-                
+
             # Use minimum of remaining time or max single attempt
             attempt_timeout = min(remaining_time, max_single_attempt)
-            
+
             # Use a temporary thread to run the blocking operation
             multiprocess_lock = await asyncio.to_thread(
                 lambda: semaphore.acquire(timeout=attempt_timeout, check_interval=0.1, fail_when_locked=False)
             )
             if multiprocess_lock:
                 return True, multiprocess_lock
-            
+
             # If we didn't get the lock, wait before retrying
             if remaining_time > retry_delay:
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * backoff_factor, 1.0)  # Cap at 1 second
-                
+
         except Exception as e:
             if 'Could not acquire' not in str(e) and not isinstance(e, TimeoutError):
                 raise
-    
+
     # Timeout reached
     if not semaphore_lax:
         raise TimeoutError(
@@ -225,8 +225,7 @@ async def _acquire_multiprocess_semaphore(
             f'(limit={semaphore_limit}, timeout={timeout}s per operation)'
         )
     logger.warning(
-        f'Failed to acquire multiprocess semaphore "{sem_key}" after {sem_timeout:.1f}s, '
-        f'proceeding without concurrency limit'
+        f'Failed to acquire multiprocess semaphore "{sem_key}" after {sem_timeout:.1f}s, proceeding without concurrency limit'
     )
     return False, None
 
