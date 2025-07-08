@@ -156,8 +156,8 @@ async def test_comprehensive_patterns():
     log_eventbus_tree(bus1)
     log_eventbus_tree(bus2)
 
-    await bus1.stop()
-    await bus2.stop()
+    await bus1.stop(clear=True)
+    await bus2.stop(clear=True)
 
 
 async def test_race_condition_stress():
@@ -227,8 +227,8 @@ async def test_race_condition_stress():
     log_eventbus_tree(bus1)
     log_eventbus_tree(bus2)
 
-    await bus1.stop()
-    await bus2.stop()
+    await bus1.stop(clear=True)
+    await bus2.stop(clear=True)
 
 
 async def main():

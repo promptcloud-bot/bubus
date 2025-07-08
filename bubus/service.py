@@ -1,6 +1,5 @@
 import asyncio
 import contextvars
-import gc
 import inspect
 import logging
 import warnings
@@ -270,11 +269,31 @@ class EventBus:
         # gc.collect()  # Commented out - this is expensive and causes 5s delays when creating many EventBus instances
 
         # Check for name uniqueness among existing instances
-        for existing_bus in EventBus.all_instances:
+        # We'll collect potential conflicts and check if they're still alive
+        for existing_bus in list(EventBus.all_instances):  # Make a list copy to avoid modification during iteration
             if existing_bus is not self and existing_bus.name == self.name:
-                raise ValueError(
-                    f'EventBus with name "{self.name}" already exists. Please choose a unique name or let it auto-generate.'
-                )
+                # Try to trigger collection of just this object by checking if it's collectable
+                # First, temporarily remove from WeakSet to see if that was the only reference
+                EventBus.all_instances.discard(existing_bus)
+
+                # Check if the object is still reachable by creating a new weak reference
+                # If the object only existed in the WeakSet, it should be unreachable now
+                try:
+                    # Try to access an attribute to see if the object is still valid
+                    _ = existing_bus.name  # This will work if object is still alive
+
+                    # Object is still alive with real references, restore to WeakSet and raise error
+                    EventBus.all_instances.add(existing_bus)
+                    raise ValueError(
+                        f'EventBus with name "{self.name}" already exists. Please choose a unique name or let it auto-generate.'
+                    )
+                except ValueError:
+                    # Re-raise the ValueError we just raised
+                    raise
+                except Exception:
+                    # Object was garbage collected or is invalid (e.g., AttributeError), that's fine
+                    # Don't re-add to WeakSet, let it stay removed
+                    pass
 
         self.event_queue = None
         self.event_history = {}

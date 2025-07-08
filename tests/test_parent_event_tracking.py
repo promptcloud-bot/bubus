@@ -32,7 +32,7 @@ async def eventbus():
     """Create an event bus for testing"""
     bus = EventBus(name='TestBus')
     yield bus
-    await bus.stop()
+    await bus.stop(clear=True)
 
 
 class TestParentEventTracking:

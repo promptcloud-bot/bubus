@@ -10,6 +10,14 @@ from typing import Any, Literal, ParamSpec, TypeVar
 
 import portalocker
 
+# Silence portalocker debug messages
+portalocker_logger = logging.getLogger('portalocker.utils')
+portalocker_logger.setLevel(logging.WARNING)
+
+# Silence root level portalocker logs too
+portalocker_root_logger = logging.getLogger('portalocker')
+portalocker_root_logger.setLevel(logging.WARNING)
+
 PSUTIL_AVAILABLE = False
 try:
     import psutil  # type: ignore[import]
