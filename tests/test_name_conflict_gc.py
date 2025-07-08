@@ -20,13 +20,18 @@ class TestNameConflictGC:
     """Test EventBus name conflict resolution with garbage collection"""
 
     def test_name_conflict_with_live_reference(self):
-        """Test that name conflict is raised when the existing bus has live references"""
+        """Test that name conflict generates a warning and auto-generates a unique name"""
         # Create an EventBus with a specific name
         bus1 = EventBus(name="TestBus")
         
-        # Try to create another with the same name - should raise ValueError
-        with pytest.raises(ValueError, match='EventBus with name "TestBus" already exists'):
+        # Try to create another with the same name - should warn and auto-generate unique name
+        with pytest.warns(UserWarning, match='EventBus with name "TestBus" already exists'):
             bus2 = EventBus(name="TestBus")
+        
+        # The second bus should have a unique name
+        assert bus2.name.startswith("TestBus_")
+        assert bus2.name != "TestBus"
+        assert len(bus2.name) == len("TestBus_") + 8  # Original name + underscore + 8 char suffix
     
     def test_name_no_conflict_after_deletion(self):
         """Test that name conflict is NOT raised after the existing bus is deleted"""
@@ -81,12 +86,14 @@ class TestNameConflictGC:
         bus2_new = EventBus(name="Bus2")
         bus4_new = EventBus(name="Bus4")
         
-        # But not with names of buses that still exist
-        with pytest.raises(ValueError, match='EventBus with name "Bus1" already exists'):
-            EventBus(name="Bus1")
+        # But not with names of buses that still exist - they get auto-generated names
+        with pytest.warns(UserWarning, match='EventBus with name "Bus1" already exists'):
+            bus1_conflict = EventBus(name="Bus1")
+        assert bus1_conflict.name.startswith("Bus1_")
         
-        with pytest.raises(ValueError, match='EventBus with name "Bus3" already exists'):
-            EventBus(name="Bus3")
+        with pytest.warns(UserWarning, match='EventBus with name "Bus3" already exists'):
+            bus3_conflict = EventBus(name="Bus3")
+        assert bus3_conflict.name.startswith("Bus3_")
     
     @pytest.mark.asyncio
     async def test_name_conflict_after_stop_and_clear(self):
@@ -141,10 +148,14 @@ class TestNameConflictGC:
         assert len(names) == 1  # Only the new one
     
     def test_concurrent_name_creation(self):
-        """Test that concurrent creation with same name still raises error appropriately"""
+        """Test that concurrent creation with same name generates warning and unique name"""
         # This tests the edge case where two buses might be created nearly simultaneously
         bus1 = EventBus(name="ConcurrentTest")
         
-        # Even if we're in the middle of checking, the second one should fail
-        with pytest.raises(ValueError, match='EventBus with name "ConcurrentTest" already exists'):
+        # Even if we're in the middle of checking, the second one should get a unique name
+        with pytest.warns(UserWarning, match='EventBus with name "ConcurrentTest" already exists'):
             bus2 = EventBus(name="ConcurrentTest")
+        
+        assert bus1.name == "ConcurrentTest"
+        assert bus2.name.startswith("ConcurrentTest_")
+        assert bus2.name != bus1.name

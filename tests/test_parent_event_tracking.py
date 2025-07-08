@@ -234,8 +234,8 @@ class TestParentEventTracking:
             assert received_child.event_parent_id == parent.event_id
 
         finally:
-            await bus1.stop()
-            await bus2.stop()
+            await bus1.stop(clear=True)
+            await bus2.stop(clear=True)
 
     async def test_sync_handler_parent_tracking(self, eventbus: EventBus):
         """Test parent tracking works with sync handlers"""

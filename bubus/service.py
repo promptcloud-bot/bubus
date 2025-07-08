@@ -270,6 +270,9 @@ class EventBus:
 
         # Check for name uniqueness among existing instances
         # We'll collect potential conflicts and check if they're still alive
+        original_name = self.name
+        conflicting_buses = []
+        
         for existing_bus in list(EventBus.all_instances):  # Make a list copy to avoid modification during iteration
             if existing_bus is not self and existing_bus.name == self.name:
                 # Try to trigger collection of just this object by checking if it's collectable
@@ -282,18 +285,27 @@ class EventBus:
                     # Try to access an attribute to see if the object is still valid
                     _ = existing_bus.name  # This will work if object is still alive
 
-                    # Object is still alive with real references, restore to WeakSet and raise error
+                    # Object is still alive with real references, restore to WeakSet
                     EventBus.all_instances.add(existing_bus)
-                    raise ValueError(
-                        f'EventBus with name "{self.name}" already exists. Please choose a unique name or let it auto-generate.'
-                    )
-                except ValueError:
-                    # Re-raise the ValueError we just raised
-                    raise
+                    conflicting_buses.append(existing_bus)
                 except Exception:
                     # Object was garbage collected or is invalid (e.g., AttributeError), that's fine
                     # Don't re-add to WeakSet, let it stay removed
                     pass
+        
+        # If we found conflicting buses, auto-generate a unique suffix
+        if conflicting_buses:
+            # Generate a unique suffix using the last 8 chars of a UUID
+            unique_suffix = uuid7str()[-8:]
+            self.name = f"{original_name}_{unique_suffix}"
+            
+            warnings.warn(
+                f'⚠️ EventBus with name "{original_name}" already exists. '
+                f'Auto-generated unique name: "{self.name}" to avoid conflicts. '
+                f'Consider using unique names or stop(clear=True) on unused buses.',
+                UserWarning,
+                stacklevel=2,
+            )
 
         self.event_queue = None
         self.event_history = {}
