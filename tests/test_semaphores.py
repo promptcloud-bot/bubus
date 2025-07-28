@@ -464,6 +464,60 @@ class TestMultiprocessSemaphore:
                 f'Min release: {min_release_time:.2f}, Second batch times: {second_batch_times}'
             )
 
+    async def test_semaphore_file_disappears(self):
+        """Test that semaphores handle missing lock files gracefully."""
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from bubus import helpers
+
+        # Use a custom directory for this test
+        test_dir = Path(tempfile.gettempdir()) / 'test_semaphore_disappear'
+        test_dir.mkdir(exist_ok=True)
+
+        original_dir = helpers.MULTIPROCESS_SEMAPHORE_DIR
+        try:
+            # Monkey patch the directory for this test
+            helpers.MULTIPROCESS_SEMAPHORE_DIR = test_dir
+
+            acquired_count = 0
+
+            @retry(
+                retries=0,
+                timeout=5,
+                semaphore_limit=2,
+                semaphore_name='disappearing_sem',
+                semaphore_scope='multiprocess',
+                semaphore_lax=True,  # Allow continuing without semaphore
+            )
+            async def test_function():
+                nonlocal acquired_count
+                acquired_count += 1
+
+                # After first acquisition, remove the semaphore directory
+                if acquired_count == 1:
+                    shutil.rmtree(test_dir, ignore_errors=True)
+
+                await asyncio.sleep(0.1)
+                return f'completed_{acquired_count}'
+
+            # Run multiple tasks concurrently
+            tasks = [test_function() for _ in range(3)]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Should complete successfully despite directory removal
+            successful_results = [r for r in results if isinstance(r, str) and r.startswith('completed_')]
+            assert len(successful_results) == 3, f'All tasks should complete. Results: {results}'
+
+        finally:
+            # Restore original directory
+            from bubus import helpers
+
+            helpers.MULTIPROCESS_SEMAPHORE_DIR = original_dir
+            # Clean up test directory
+            shutil.rmtree(test_dir, ignore_errors=True)
+
 
 class TestRegularSemaphoreScopes:
     """Test non-multiprocess semaphore scopes still work correctly."""

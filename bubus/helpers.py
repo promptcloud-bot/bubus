@@ -225,6 +225,8 @@ async def _acquire_multiprocess_semaphore(
     retry_delay = 0.1  # Start with 100ms
     backoff_factor = 2.0
     max_single_attempt = 1.0  # Max time for a single acquire attempt
+    recreate_attempts = 0
+    max_recreate_attempts = 3
 
     while time.time() - start_time < sem_timeout:
         try:
@@ -247,6 +249,50 @@ async def _acquire_multiprocess_semaphore(
             if remaining_time > retry_delay:
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * backoff_factor, 1.0)  # Cap at 1 second
+
+        except (FileNotFoundError, OSError) as e:
+            # Handle case where lock file disappears
+            if isinstance(e, FileNotFoundError) or 'No such file or directory' in str(e):
+                recreate_attempts += 1
+                if recreate_attempts <= max_recreate_attempts:
+                    logger.warning(
+                        f'Semaphore lock file disappeared for "{sem_key}". Attempting to recreate (attempt {recreate_attempts}/{max_recreate_attempts})...'
+                    )
+
+                    # Ensure directory exists
+                    with MULTIPROCESS_SEMAPHORE_LOCK:
+                        MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True, parents=True)
+
+                    # Try to recreate the semaphore
+                    try:
+                        semaphore = await asyncio.to_thread(
+                            lambda: portalocker.utils.NamedBoundedSemaphore(
+                                maximum=semaphore_limit,
+                                name=sem_key,
+                                directory=str(MULTIPROCESS_SEMAPHORE_DIR),
+                                timeout=0.1,
+                            )
+                        )
+                        # Continue with the new semaphore
+                        continue
+                    except Exception as recreate_error:
+                        logger.error(f'Failed to recreate semaphore: {recreate_error}')
+                        # If recreation fails and we're in lax mode, return without lock
+                        if semaphore_lax:
+                            logger.warning(f'Failed to recreate semaphore "{sem_key}", proceeding without concurrency limit')
+                            return False, None
+                        raise
+                else:
+                    # Max recreate attempts exceeded
+                    if semaphore_lax:
+                        logger.warning(
+                            f'Max semaphore recreation attempts exceeded for "{sem_key}", proceeding without concurrency limit'
+                        )
+                        return False, None
+                    raise
+            else:
+                # Other OS errors
+                raise
 
         except (AssertionError, Exception) as e:
             # Handle "Already locked" error by skipping this attempt
@@ -466,10 +512,18 @@ def retry(
                 _track_active_operations(increment=False)
 
                 if semaphore_acquired and semaphore:
-                    if semaphore_scope == 'multiprocess' and multiprocess_lock:
-                        await asyncio.to_thread(lambda: multiprocess_lock.release())
-                    elif semaphore:
-                        semaphore.release()
+                    try:
+                        if semaphore_scope == 'multiprocess' and multiprocess_lock:
+                            await asyncio.to_thread(lambda: multiprocess_lock.release())
+                        elif semaphore:
+                            semaphore.release()
+                    except (FileNotFoundError, OSError) as e:
+                        # Handle case where lock file was removed during operation
+                        if isinstance(e, FileNotFoundError) or 'No such file or directory' in str(e):
+                            logger.warning(f'Semaphore lock file disappeared during release, ignoring: {e}')
+                        else:
+                            # Log other OS errors but don't raise - we already completed the operation
+                            logger.error(f'Error releasing semaphore: {e}')
 
         return wrapper
 
