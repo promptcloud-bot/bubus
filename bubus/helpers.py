@@ -2,7 +2,7 @@ import asyncio
 import logging
 import tempfile
 import threading
-import time
+import time, os
 import getpass
 from collections.abc import Callable, Coroutine
 from functools import wraps
@@ -75,8 +75,15 @@ GLOBAL_RETRY_SEMAPHORE_LOCK = threading.Lock()
 
 # Multiprocess semaphore support
 username = getpass.getuser()
-MULTIPROCESS_SEMAPHORE_DIR = Path(tempfile.gettempdir()) / 'browser_use_semaphores' / f"{username}"
+base_dir = Path(tempfile.gettempdir()) / 'browser_use_semaphores'
+if not base_dir.exists():
+    base_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(base_dir, 0o777)
+
+# user-folder with user restricted
+MULTIPROCESS_SEMAPHORE_DIR = base_dir / f"{username}"
 MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True)
+os.chmod(MULTIPROCESS_SEMAPHORE_DIR, 0o700)
 
 # Global multiprocess semaphore registry
 # Multiprocess semaphores are not cached due to internal state issues causing "Already locked" errors
