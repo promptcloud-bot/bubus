@@ -3,6 +3,7 @@ import logging
 import tempfile
 import threading
 import time
+import getpass
 from collections.abc import Callable, Coroutine
 from functools import wraps
 from pathlib import Path
@@ -73,7 +74,8 @@ GLOBAL_RETRY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 GLOBAL_RETRY_SEMAPHORE_LOCK = threading.Lock()
 
 # Multiprocess semaphore support
-MULTIPROCESS_SEMAPHORE_DIR = Path(tempfile.gettempdir()) / 'browser_use_semaphores'
+username = getpass.getuser()
+MULTIPROCESS_SEMAPHORE_DIR = Path(tempfile.gettempdir()) / 'browser_use_semaphores' / f"{username}"
 MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True)
 
 # Global multiprocess semaphore registry
